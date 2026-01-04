@@ -9,7 +9,13 @@ A **beautiful**, **production-ready** CLI/TUI tool for analyzing and visualizing
 [![CI](https://github.com/ikari-pl/go-temporalio-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/ikari-pl/go-temporalio-analyzer/actions/workflows/ci.yml)
 
 If you find this tool useful, please consider buying me a coffee!
+
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/A0A4GUGRG)
+
+## 🌈🦄 Beauty ✨
+
+https://github.com/user-attachments/assets/3a79bea4-3209-4535-b5e7-da4fa60b1e02
+
 
 ## ✨ Features
 
