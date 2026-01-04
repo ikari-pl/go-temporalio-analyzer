@@ -25,7 +25,7 @@ INSTALL_DIR := $(HOME)/.local/bin
 COVERAGE_FILE := coverage.out
 COVERAGE_HTML := coverage.html
 
-.PHONY: all build install uninstall test test-coverage test-race lint fmt vet clean deps tidy help demo
+.PHONY: all build install uninstall test test-coverage test-race lint fmt vet clean deps tidy help
 
 ## Default target
 all: build
@@ -151,35 +151,6 @@ clean:
 	@rm -f $(BINARY_NAME)
 	@echo "✅ Cleaned"
 
-## Record terminalizer demo
-demo-record:
-	@echo "🎬 Recording demo with terminalizer..."
-	@if [ ! -f demo.yml ]; then \
-		echo "❌ demo.yml not found. Create it from the example:"; \
-		echo "   cp demo.yml.example demo.yml"; \
-		echo "   Then edit demo.yml and update 'cwd' to your project path."; \
-		exit 1; \
-	fi
-	@if ! command -v terminalizer >/dev/null 2>&1; then \
-		echo "❌ terminalizer not found. Install with: npm install -g terminalizer"; \
-		exit 1; \
-	fi
-	terminalizer record demo -c demo.yml
-
-## Render terminalizer demo to GIF
-demo-render:
-	@echo "🎬 Rendering demo to GIF..."
-	@if ! command -v terminalizer >/dev/null 2>&1; then \
-		echo "❌ terminalizer not found. Install with: npm install -g terminalizer"; \
-		exit 1; \
-	fi
-	@mkdir -p .github
-	terminalizer render demo -o .github/demo.gif
-	@echo "✅ Demo rendered: .github/demo.gif"
-
-## Record and render demo
-demo: demo-record demo-render
-
 ## Run the analyzer on itself (dogfooding)
 dogfood: build
 	@echo "🐕 Running analyzer on itself..."
@@ -207,9 +178,6 @@ help:
 	@echo "  deps           Download dependencies"
 	@echo "  tidy           Tidy dependencies"
 	@echo "  clean          Remove build artifacts"
-	@echo "  demo-record    Record a terminalizer demo"
-	@echo "  demo-render    Render demo to GIF"
-	@echo "  demo           Record and render demo"
 	@echo "  dogfood        Run analyzer on itself"
 	@echo "  help           Show this help"
 
