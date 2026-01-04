@@ -151,6 +151,7 @@ func extractPositionalPath(args []string) ([]string, string) {
 	}
 
 	// Flags that take a value (need to skip their next arg)
+	// NOTE: Keep this map in sync with flag definitions in loadFromFlags()
 	flagsWithValue := map[string]bool{
 		"-root": true, "--root": true,
 		"-package": true, "--package": true,
