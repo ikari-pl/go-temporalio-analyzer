@@ -13,16 +13,21 @@ globs: *
 *   Charmbracelet Lipgloss
 
 ## PROJECT DOCUMENTATION &amp; CONTEXT SYSTEM
+*   Aim for 100% code coverage
 *   The project includes comprehensive documentation.
+*   Aim for 100% code coverage.
 *   Use code comments and descriptions to clearly explain the purpose and function of different code sections.
 *   Keep documentation up-to-date with any changes to the codebase.
-*   Aim for 100% code coverage.
 
 ## CODING STANDARDS
 *   Follow Go coding conventions and best practices.
 *   Write clean, modular, and well-documented code.
 *   Use descriptive names for variables, functions, and methods.
 *   Adhere to the project's architectural principles, emphasizing separation of concerns and domain-driven design.
+*   Pre-allocate maps with capacity hints for better memory efficiency (Go 1.25 Swiss Tables).
+*   Use strings.Builder for string concatenation to reduce allocations in hot paths.
+*   Use strings.TrimPrefix for more idiomatic and efficient string processing.
+*   Use capacity hints for slices to reduce GC pressure.
 
 ## WORKFLOW &amp; RELEASE RULES
 *   All code changes must be reviewed before being merged.
@@ -30,6 +35,11 @@ globs: *
 *   Add a Codecov CI configuration. The `CODECOV_TOKEN` is in place.
 *   Add a `make install` command that installs the library globally in a writable directory that's in the PATH.
 *   Add a `make build` command.
+*   Add a Codecov CI config with GitHub Actions workflow
+*   Create Makefile with build, install, and test targets
+*   Add an optional positional argument for specifying the path of the project to scan. If not specified, defaults to the current working directory. This is an easier alternative to the `--root-dir` flag.
+*   The path argument can now appear **anywhere** in the command line. The argument is extracted before flag processing and is used if the `--root` flag is not explicitly set.
+*   Update the CI workflow to use a newer golangci-lint version that supports Go 1.25.
 
 ## DEBUGGING
 *   Use logging and debugging tools to identify and resolve issues.
@@ -37,7 +47,7 @@ globs: *
 ## TUI DESIGN PRINCIPLES
 *   The TUI should be aesthetically pleasing and easy to navigate.
 *   Use clear and concise language in the user interface.
-*   Provide helpful tooltips and documentation to guide users.
+*   Use helpful tooltips and documentation to guide users.
 *   When implementing the TUI, make sure to use a modern aesthetic design with better colors, borders, and visual hierarchy. Aim for a beautiful theme system with a modern aesthetic (Catppuccin-inspired).
 *   Redesign the TUI with stunning visuals: header, footer, borders, gradients.
 
@@ -98,22 +108,16 @@ globs: *
 *   The list view should only show top-level workflows from the tree.
 
 ## GENERAL NOTES
-*   Add new views: Stats dashboard, Graph visualization, Help overlay.
-*   Implement a keyboard shortcut system with a help panel.
-*   Add workflow search with fuzzy matching.
-*   Create export functionality (DOT, Mermaid, Markdown).
-*   The tool should be able to export the analysis in multiple formats, including DOT (Graphviz), Mermaid, and Markdown.
-*   The TUI should be aesthetically pleasing and easy to navigate.
-*   Use clear and concise language in the user interface.
-*   Provide helpful tooltips and documentation to guide users.
-*   Implement robust error handling to prevent unexpected crashes.
-*   Log errors and provide informative error messages to the user.
-*   In the details view, show internal calls (non-Temporal function calls) within Activities.
-*   In the tree view, provide options to group the workflow by package or call hierarchy.
-*   In the tree view, show internal calls (non-Temporal function calls) within Activities.
-*   In the tree view, provide options to group the workflow by package or call hierarchy.
-*   In the tree view, "by package" should use FQNs (grouping by common parent), otherwise it's too many.
-*   Implement an optional positional argument for specifying the path of the project to scan. If not specified, defaults to the current working directory. This is an easier alternative to the `--root-dir` flag.
+*   Record and render a terminalizer demo.
+Implement an optional positional argument for specifying the path of the project to scan. If not specified, defaults to the current working directory. This is an easier alternative to the `--root-dir` flag.
+* Upgrade to Go 1.25 (or latest stable) and update go.mod
+* Add Codecov CI config with GitHub Actions workflow
+* Create Makefile with build, install, and test targets
+* Implement Go 1.25 style optimizations
+* Update the README with installation instructions and usage examples.
+*   **Positional Argument** - The path argument can now appear **anywhere** in the command line. The argument is extracted before flag processing and is used if the `--root` flag is not explicitly set.
+* Update the CI workflow to use a newer golangci-lint version that supports Go 1.25.
+*   Record and render a terminalizer demo.
 
 ## CI/CD INTEGRATION
 *   Implement a "lint" mode to use the analyzer in CI/CD pipelines. This mode should run non-interactively and report issues/violations in a CI-friendly format that could fail a CI build.
@@ -141,13 +145,3 @@ globs: *
 *   **SignalWithoutHandlerRule (TA031)**: Unhandled signals are silently dropped. External systems sending signals believe they're communicating with the workflow, but the data goes nowhere—a silent failure that's hard to debug.
 *   **QueryWithoutReturnRule (TA032)**: Queries exist so external systems can inspect workflow state without affecting execution. A query that returns nothing defeats its purpose and leaves callers without the insight they need.
 *   **ContinueAsNewWithoutConditionRule (TA033)**: Without termination conditions, continue-as-new workflows run forever, accumulating costs and never completing. Every long-running workflow should have a defined end state or maximum iterations.
-
-## GENERAL NOTES
-* Record and render a terminalizer demo.
-* Implement an optional positional argument for specifying the path of the project to scan. If not specified, defaults to the current working directory. This is an easier alternative to the `--root-dir` flag.
-* Upgrade to Go 1.25 (or latest stable) and update go.mod
-* Add Codecov CI config with GitHub Actions workflow
-* Create Makefile with build, install, and test targets
-* Implement Go 1.25 style optimizations
-* Update the README with installation instructions and usage examples.
-* **Positional Argument** - The path argument can now appear **anywhere** in the command line. The argument is extracted before flag processing and is used if the `--root` flag is not explicitly set.
