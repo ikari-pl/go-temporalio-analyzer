@@ -25,7 +25,7 @@ func NewCallExtractor(logger *slog.Logger) CallExtractor {
 
 // TemporalCallInfo holds detailed information about a Temporal API call.
 type TemporalCallInfo struct {
-	Type          string   // "activity", "child_workflow", "local_activity", "signal", "query", "update", "timer", "version"
+	Type          string // "activity", "child_workflow", "local_activity", "signal", "query", "update", "timer", "version"
 	TargetName    string
 	LineNumber    int
 	FilePath      string
@@ -254,7 +254,7 @@ func (e *callExtractor) extractInternalCalls(ctx context.Context, fn *ast.FuncDe
 		case *ast.SelectorExpr:
 			// Method call or package function: obj.Method() or pkg.Func()
 			methodName := fun.Sel.Name
-			
+
 			// Get the receiver/package name
 			var receiverName string
 			switch x := fun.X.(type) {
@@ -475,73 +475,73 @@ func (e *callExtractor) analyzeWorkflowCall(method string, call *ast.CallExpr, f
 // extractSignalHandler extracts signal handler information.
 func (e *callExtractor) extractSignalHandler(call *ast.CallExpr, lineNum int) SignalDef {
 	signalDef := SignalDef{LineNumber: lineNum}
-	
+
 	if len(call.Args) >= 1 {
 		// First arg is signal name
 		if lit, ok := call.Args[0].(*ast.BasicLit); ok {
 			signalDef.Name = strings.Trim(lit.Value, `"`)
 		}
 	}
-	
+
 	if len(call.Args) >= 2 {
 		// Second arg is handler function
 		if ident, ok := call.Args[1].(*ast.Ident); ok {
 			signalDef.Handler = ident.Name
 		}
 	}
-	
+
 	return signalDef
 }
 
 // extractSignalChannel extracts signal channel information.
 func (e *callExtractor) extractSignalChannel(call *ast.CallExpr, lineNum int) SignalDef {
 	signalDef := SignalDef{LineNumber: lineNum}
-	
+
 	if len(call.Args) >= 2 {
 		// Second arg is signal name (first is ctx)
 		if lit, ok := call.Args[1].(*ast.BasicLit); ok {
 			signalDef.Name = strings.Trim(lit.Value, `"`)
 		}
 	}
-	
+
 	return signalDef
 }
 
 // extractQueryHandler extracts query handler information.
 func (e *callExtractor) extractQueryHandler(call *ast.CallExpr, lineNum int) QueryDef {
 	queryDef := QueryDef{LineNumber: lineNum}
-	
+
 	if len(call.Args) >= 1 {
 		if lit, ok := call.Args[0].(*ast.BasicLit); ok {
 			queryDef.Name = strings.Trim(lit.Value, `"`)
 		}
 	}
-	
+
 	if len(call.Args) >= 2 {
 		if ident, ok := call.Args[1].(*ast.Ident); ok {
 			queryDef.Handler = ident.Name
 		}
 	}
-	
+
 	return queryDef
 }
 
 // extractUpdateHandler extracts update handler information.
 func (e *callExtractor) extractUpdateHandler(call *ast.CallExpr, lineNum int) UpdateDef {
 	updateDef := UpdateDef{LineNumber: lineNum}
-	
+
 	if len(call.Args) >= 1 {
 		if lit, ok := call.Args[0].(*ast.BasicLit); ok {
 			updateDef.Name = strings.Trim(lit.Value, `"`)
 		}
 	}
-	
+
 	if len(call.Args) >= 2 {
 		if ident, ok := call.Args[1].(*ast.Ident); ok {
 			updateDef.Handler = ident.Name
 		}
 	}
-	
+
 	return updateDef
 }
 
@@ -551,7 +551,7 @@ func (e *callExtractor) extractTimer(call *ast.CallExpr, method string, lineNum 
 		LineNumber: lineNum,
 		IsSleep:    method == "Sleep",
 	}
-	
+
 	// Extract duration from first non-context arg
 	for i, arg := range call.Args {
 		if i == 0 {
@@ -560,14 +560,14 @@ func (e *callExtractor) extractTimer(call *ast.CallExpr, method string, lineNum 
 		timerDef.Duration = e.exprToString(arg)
 		break
 	}
-	
+
 	return timerDef
 }
 
 // extractVersion extracts versioning information.
 func (e *callExtractor) extractVersion(call *ast.CallExpr, lineNum int) VersionDef {
 	versionDef := VersionDef{LineNumber: lineNum}
-	
+
 	// GetVersion(ctx, changeID, minSupported, maxSupported)
 	if len(call.Args) >= 2 {
 		if lit, ok := call.Args[1].(*ast.BasicLit); ok {
@@ -588,7 +588,7 @@ func (e *callExtractor) extractVersion(call *ast.CallExpr, lineNum int) VersionD
 			}
 		}
 	}
-	
+
 	return versionDef
 }
 
@@ -636,7 +636,7 @@ func (e *callExtractor) extractSearchAttr(call *ast.CallExpr, lineNum int) Searc
 // extractOptions extracts workflow/activity options from a call.
 func (e *callExtractor) extractOptions(call *ast.CallExpr) []string {
 	var options []string
-	
+
 	if len(call.Args) > 0 {
 		// Check first arg for WithActivityOptions or similar
 		if innerCall, ok := call.Args[0].(*ast.CallExpr); ok {
@@ -647,7 +647,7 @@ func (e *callExtractor) extractOptions(call *ast.CallExpr) []string {
 			}
 		}
 	}
-	
+
 	return options
 }
 
@@ -718,9 +718,9 @@ func (e *callExtractor) isWithOptionsCall(call *ast.CallExpr) bool {
 	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
 		if ident, ok := sel.X.(*ast.Ident); ok {
 			return ident.Name == "workflow" &&
-				(sel.Sel.Name == "WithActivityOptions" || 
-				 sel.Sel.Name == "WithChildWorkflowOptions" ||
-				 sel.Sel.Name == "WithLocalActivityOptions")
+				(sel.Sel.Name == "WithActivityOptions" ||
+					sel.Sel.Name == "WithChildWorkflowOptions" ||
+					sel.Sel.Name == "WithLocalActivityOptions")
 		}
 	}
 	return false
@@ -728,10 +728,10 @@ func (e *callExtractor) isWithOptionsCall(call *ast.CallExpr) bool {
 
 // isLikelyTemporalFunction checks if a function name suggests it's a temporal function.
 func (e *callExtractor) isLikelyTemporalFunction(name string) bool {
-	return strings.HasSuffix(name, "Workflow") || 
-	       strings.HasSuffix(name, "Activity") ||
-	       strings.HasSuffix(name, "Signal") ||
-	       strings.HasSuffix(name, "Query")
+	return strings.HasSuffix(name, "Workflow") ||
+		strings.HasSuffix(name, "Activity") ||
+		strings.HasSuffix(name, "Signal") ||
+		strings.HasSuffix(name, "Query")
 }
 
 // inferTypeFromName infers the node type from function name.

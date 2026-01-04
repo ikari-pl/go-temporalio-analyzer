@@ -214,24 +214,120 @@ func (p *goParser) hasWorkflowCalls(body *ast.BlockStmt) bool {
 	return hasWorkflowCalls
 }
 
-// isSignalHandler checks if this function is a signal handler.
+// isSignalHandler checks if this function is a signal handler by looking for
+// signal-specific patterns in the function body.
 func (p *goParser) isSignalHandler(fn *ast.FuncDecl) bool {
-	// Check if this function is set up as a signal handler
-	// Typically via workflow.SetSignalHandler(signalName, handlerFunc)
-	// We detect handlers that are passed to SetSignalHandler
-	return false // Will be detected through call analysis
+	if fn.Body == nil {
+		return false
+	}
+
+	isHandler := false
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		// Check for workflow.GetSignalChannel calls
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+			if ident, ok := sel.X.(*ast.Ident); ok {
+				if ident.Name == "workflow" && sel.Sel.Name == "GetSignalChannel" {
+					isHandler = true
+					return false
+				}
+			}
+		}
+		return true
+	})
+
+	return isHandler
 }
 
-// isQueryHandler checks if this function is a query handler.
+// isQueryHandler checks if this function is a query handler by looking for
+// query-specific patterns. Query handlers typically have a specific signature
+// and don't perform side effects.
 func (p *goParser) isQueryHandler(fn *ast.FuncDecl) bool {
-	// Similar to signal handler, detected through call analysis
+	if fn.Body == nil {
+		return false
+	}
+
+	// Query handlers must return something (they answer queries)
+	if fn.Type.Results == nil || len(fn.Type.Results.List) == 0 {
+		return false
+	}
+
+	// Check for workflow.SetQueryHandler being called with this function's name
+	// or workflow-specific read patterns without execution calls
+	hasWorkflowContext := false
+	if fn.Type.Params != nil && len(fn.Type.Params.List) > 0 {
+		for _, param := range fn.Type.Params.List {
+			if p.isWorkflowContext(param.Type) {
+				hasWorkflowContext = true
+				break
+			}
+		}
+	}
+
+	// If it has workflow context and returns values but doesn't execute activities,
+	// it's likely a query handler
+	if hasWorkflowContext {
+		hasActivityCall := false
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+				if ident, ok := sel.X.(*ast.Ident); ok {
+					if ident.Name == "workflow" && 
+						(sel.Sel.Name == "ExecuteActivity" || 
+						 sel.Sel.Name == "ExecuteChildWorkflow" ||
+						 sel.Sel.Name == "ExecuteLocalActivity") {
+						hasActivityCall = true
+						return false
+					}
+				}
+			}
+			return true
+		})
+		// Query handlers don't execute activities
+		if !hasActivityCall {
+			return true
+		}
+	}
+
 	return false
 }
 
-// isUpdateHandler checks if this function is an update handler.
+// isUpdateHandler checks if this function is an update handler by looking for
+// update-specific patterns like workflow.SetUpdateHandler or update validation.
 func (p *goParser) isUpdateHandler(fn *ast.FuncDecl) bool {
-	// Similar to signal handler, detected through call analysis
-	return false
+	if fn.Body == nil {
+		return false
+	}
+
+	isHandler := false
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+
+		// Check for workflow update-related calls
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+			if ident, ok := sel.X.(*ast.Ident); ok {
+				if ident.Name == "workflow" && 
+					(sel.Sel.Name == "SetUpdateHandler" ||
+					 sel.Sel.Name == "SetUpdateHandlerWithOptions") {
+					isHandler = true
+					return false
+				}
+			}
+		}
+		return true
+	})
+
+	return isHandler
 }
 
 // applyFilters applies the configured filters to the matches.
