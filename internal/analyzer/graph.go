@@ -100,8 +100,17 @@ func (g *graphBuilder) createNodeFromMatch(ctx context.Context, match NodeMatch)
 	// Extract return type
 	returnType := g.extractReturnType(fn)
 
+	// Extract receiver type for methods to create a qualified name
+	receiver := g.extractReceiverType(fn)
+
+	// Create qualified name: ReceiverType.FunctionName or just FunctionName
+	qualifiedName := fn.Name.Name
+	if receiver != "" {
+		qualifiedName = receiver + "." + fn.Name.Name
+	}
+
 	node := &TemporalNode{
-		Name:        fn.Name.Name,
+		Name:        qualifiedName,
 		Type:        match.NodeType,
 		Package:     match.Package,
 		FilePath:    match.FilePath,
@@ -122,6 +131,17 @@ func (g *graphBuilder) createNodeFromMatch(ctx context.Context, match NodeMatch)
 	return node, nil
 }
 
+// extractReceiverType extracts the receiver type from a method declaration.
+// Returns empty string for regular functions.
+func (g *graphBuilder) extractReceiverType(fn *ast.FuncDecl) string {
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return ""
+	}
+
+	recv := fn.Recv.List[0]
+	return g.typeToString(recv.Type)
+}
+
 // buildRelationships builds call relationships between nodes.
 func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, graph *TemporalGraph) error {
 	fn, ok := match.Node.(*ast.FuncDecl)
@@ -133,7 +153,13 @@ func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, 
 		return fmt.Errorf("function declaration has no name")
 	}
 
+	// Use qualified name (with receiver) to match how nodes are stored
+	receiver := g.extractReceiverType(fn)
 	nodeName := fn.Name.Name
+	if receiver != "" {
+		nodeName = receiver + "." + fn.Name.Name
+	}
+
 	node, exists := graph.Nodes[nodeName]
 	if !exists {
 		return fmt.Errorf("node %s not found in graph", nodeName)
@@ -156,12 +182,18 @@ func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, 
 			node.Versioning = details.Versions
 			node.SearchAttrs = details.SearchAttrs
 
-			// Build parent relationships
-			for _, callSite := range details.CallSites {
-				if targetNode, exists := graph.Nodes[callSite.TargetName]; exists {
+			// Build parent relationships with fuzzy matching
+			for i, callSite := range details.CallSites {
+				resolvedName := g.resolveTargetName(callSite.TargetName, graph)
+				if resolvedName != callSite.TargetName {
+					// Update the call site with resolved name
+					details.CallSites[i].TargetName = resolvedName
+				}
+				if targetNode, exists := graph.Nodes[resolvedName]; exists {
 					targetNode.Parents = g.addUniqueParent(targetNode.Parents, nodeName)
 				}
 			}
+			node.CallSites = details.CallSites
 		}
 
 		// Extract internal (non-Temporal) function calls
@@ -176,13 +208,17 @@ func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, 
 			return fmt.Errorf("failed to extract calls: %w", err)
 		}
 
-		node.CallSites = callSites
-
-		for _, callSite := range callSites {
-			if targetNode, exists := graph.Nodes[callSite.TargetName]; exists {
+		// Resolve target names with fuzzy matching
+		for i, callSite := range callSites {
+			resolvedName := g.resolveTargetName(callSite.TargetName, graph)
+			if resolvedName != callSite.TargetName {
+				callSites[i].TargetName = resolvedName
+			}
+			if targetNode, exists := graph.Nodes[resolvedName]; exists {
 				targetNode.Parents = g.addUniqueParent(targetNode.Parents, nodeName)
 			}
 		}
+		node.CallSites = callSites
 	}
 
 	return nil
@@ -399,4 +435,36 @@ func (g *graphBuilder) addUniqueParent(parents []string, parent string) []string
 		}
 	}
 	return append(parents, parent)
+}
+
+// resolveTargetName tries to resolve a target name to a node in the graph.
+// Handles cases where the target is "varName.MethodName" but the graph has "TypeName.MethodName".
+func (g *graphBuilder) resolveTargetName(targetName string, graph *TemporalGraph) string {
+	// Try exact match first
+	if _, exists := graph.Nodes[targetName]; exists {
+		return targetName
+	}
+
+	// If target contains a dot (like "handler.GetMethod"), try to match by method name
+	if idx := strings.LastIndex(targetName, "."); idx > 0 {
+		methodName := targetName[idx+1:]
+
+		// Look for nodes whose name ends with .MethodName
+		var candidates []*TemporalNode
+		for name, node := range graph.Nodes {
+			if strings.HasSuffix(name, "."+methodName) {
+				candidates = append(candidates, node)
+			}
+		}
+
+		// If exactly one candidate, use it
+		if len(candidates) == 1 {
+			return candidates[0].Name
+		}
+
+		// If multiple candidates, we can't resolve uniquely, so return original
+		// The cycle detection will handle this case appropriately
+	}
+
+	return targetName
 }

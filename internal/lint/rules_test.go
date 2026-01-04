@@ -182,17 +182,39 @@ func TestOrphanNodeRule(t *testing.T) {
 		t.Errorf("ID() = %q, want %q", rule.ID(), "TA011")
 	}
 
-	// Test with orphan activity
+	ctx := context.Background()
+
+	// Activities are now skipped (may be called cross-repo)
 	graph := &analyzer.TemporalGraph{
 		Nodes: map[string]*analyzer.TemporalNode{
 			"OrphanActivity": {Name: "OrphanActivity", Type: "activity"},
 		},
 	}
-
-	ctx := context.Background()
 	issues := rule.Check(ctx, graph)
+	if len(issues) != 0 {
+		t.Error("Activities should be skipped (may be called from other repos)")
+	}
+
+	// Orphan signal handlers should still be reported (exported)
+	graph = &analyzer.TemporalGraph{
+		Nodes: map[string]*analyzer.TemporalNode{
+			"OrphanSignalHandler": {Name: "OrphanSignalHandler", Type: "signal_handler"},
+		},
+	}
+	issues = rule.Check(ctx, graph)
 	if len(issues) == 0 {
-		t.Error("Expected issue for orphan activity")
+		t.Error("Expected issue for orphan signal handler")
+	}
+
+	// Unexported (private) methods should be skipped
+	graph = &analyzer.TemporalGraph{
+		Nodes: map[string]*analyzer.TemporalNode{
+			"privateHelper": {Name: "privateHelper", Type: "signal_handler"},
+		},
+	}
+	issues = rule.Check(ctx, graph)
+	if len(issues) != 0 {
+		t.Error("Unexported methods should be skipped")
 	}
 
 	// Top-level workflows are not orphans

@@ -320,8 +320,27 @@ func (r *OrphanNodeRule) Check(ctx context.Context, graph *analyzer.TemporalGrap
 		if node.Type == "workflow" && len(node.Parents) == 0 {
 			continue
 		}
+
+		// Skip activities entirely - they may be called from other repositories
+		// or registered dynamically with workers. This check produces too many
+		// false positives for activities.
+		if node.Type == "activity" {
+			continue
+		}
+
+		// Extract the method/function name (after the last dot if qualified)
+		name := node.Name
+		if idx := strings.LastIndex(name, "."); idx >= 0 {
+			name = name[idx+1:]
+		}
+
+		// Skip unexported (private) methods - these are likely helper methods,
+		// not meant to be called as activities/workflows from outside
+		if len(name) > 0 && name[0] >= 'a' && name[0] <= 'z' {
+			continue
+		}
+
 		// Check if node is never called (has no parents)
-		// Note: Even if the node calls other things, it's still dead code if nothing calls it
 		if len(node.Parents) == 0 {
 			issues = append(issues, Issue{
 				RuleID:      r.ID(),
@@ -330,7 +349,7 @@ func (r *OrphanNodeRule) Check(ctx context.Context, graph *analyzer.TemporalGrap
 				Category:    r.Category(),
 				Message:     fmt.Sprintf("%s '%s' appears to be unused (never called)", node.Type, node.Name),
 				Description: r.Description(),
-				Suggestion:  "Consider removing unused code or verify it's registered with a worker",
+				Suggestion:  "Consider removing unused code, or verify it's called from another repository or registered with a worker",
 				FilePath:    node.FilePath,
 				LineNumber:  node.LineNumber,
 				NodeName:    node.Name,

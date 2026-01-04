@@ -449,13 +449,13 @@ func TestExtractFunctionReference(t *testing.T) {
 		t.Errorf("extractFunctionReference(ident) = %q, want %q", got, "MyActivity")
 	}
 
-	// Test with selector
+	// Test with selector - now includes receiver for better disambiguation
 	sel := &ast.SelectorExpr{
 		X:   &ast.Ident{Name: "pkg"},
 		Sel: &ast.Ident{Name: "Function"},
 	}
-	if got := e.extractFunctionReference(sel); got != "Function" {
-		t.Errorf("extractFunctionReference(sel) = %q, want %q", got, "Function")
+	if got := e.extractFunctionReference(sel); got != "pkg.Function" {
+		t.Errorf("extractFunctionReference(sel) = %q, want %q", got, "pkg.Function")
 	}
 
 	// Test with func lit

@@ -756,6 +756,11 @@ func (e *callExtractor) extractFunctionReference(expr ast.Expr) string {
 	case *ast.Ident:
 		return e.Name
 	case *ast.SelectorExpr:
+		// For selector expressions like handler.MethodName, include the receiver
+		// This helps distinguish between different receivers calling methods with the same name
+		if ident, ok := e.X.(*ast.Ident); ok {
+			return ident.Name + "." + e.Sel.Name
+		}
 		return e.Sel.Name
 	case *ast.FuncLit:
 		return ""

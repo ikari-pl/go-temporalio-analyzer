@@ -1047,3 +1047,86 @@ func TestListItemCreation(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// transformLintSubcommand Tests
+// =============================================================================
+
+func TestTransformLintSubcommand(t *testing.T) {
+	tests := []struct {
+		name     string
+		args     []string
+		expected []string
+	}{
+		{
+			name:     "no args",
+			args:     []string{"temporal-analyzer"},
+			expected: []string{"temporal-analyzer"},
+		},
+		{
+			name:     "lint subcommand basic",
+			args:     []string{"temporal-analyzer", "lint"},
+			expected: []string{"temporal-analyzer", "--lint"},
+		},
+		{
+			name:     "lint subcommand with path",
+			args:     []string{"temporal-analyzer", "lint", "./..."},
+			expected: []string{"temporal-analyzer", "--lint", "./..."},
+		},
+		{
+			name:     "lint subcommand with --format=github-actions",
+			args:     []string{"temporal-analyzer", "lint", "--format=github-actions", "./..."},
+			expected: []string{"temporal-analyzer", "--lint", "--lint-format=github", "./..."},
+		},
+		{
+			name:     "lint subcommand with -format=github-actions",
+			args:     []string{"temporal-analyzer", "lint", "-format=github-actions", "./..."},
+			expected: []string{"temporal-analyzer", "--lint", "--lint-format=github", "./..."},
+		},
+		{
+			name:     "lint subcommand with --format=text",
+			args:     []string{"temporal-analyzer", "lint", "--format=text", "./..."},
+			expected: []string{"temporal-analyzer", "--lint", "--lint-format=text", "./..."},
+		},
+		{
+			name:     "lint subcommand with --format json (space separated)",
+			args:     []string{"temporal-analyzer", "lint", "--format", "json", "./..."},
+			expected: []string{"temporal-analyzer", "--lint", "--lint-format", "json", "./..."},
+		},
+		{
+			name:     "not a lint subcommand - regular flag usage",
+			args:     []string{"temporal-analyzer", "--lint", "--lint-format=github", "./..."},
+			expected: []string{"temporal-analyzer", "--lint", "--lint-format=github", "./..."},
+		},
+		{
+			name:     "not a lint subcommand - other first arg",
+			args:     []string{"temporal-analyzer", "./..."},
+			expected: []string{"temporal-analyzer", "./..."},
+		},
+		{
+			name:     "lint subcommand with multiple flags",
+			args:     []string{"temporal-analyzer", "lint", "--format=github-actions", "--lint-strict", "./..."},
+			expected: []string{"temporal-analyzer", "--lint", "--lint-format=github", "--lint-strict", "./..."},
+		},
+		{
+			name:     "lint subcommand preserves other flags",
+			args:     []string{"temporal-analyzer", "lint", "--verbose", "--debug", "./..."},
+			expected: []string{"temporal-analyzer", "--lint", "--verbose", "--debug", "./..."},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := transformLintSubcommand(tt.args)
+			if len(result) != len(tt.expected) {
+				t.Errorf("transformLintSubcommand(%v) = %v, want %v", tt.args, result, tt.expected)
+				return
+			}
+			for i := range result {
+				if result[i] != tt.expected[i] {
+					t.Errorf("transformLintSubcommand(%v)[%d] = %q, want %q", tt.args, i, result[i], tt.expected[i])
+				}
+			}
+		})
+	}
+}
+
