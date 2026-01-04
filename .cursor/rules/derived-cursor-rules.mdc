@@ -34,8 +34,8 @@ globs: *
 *   The TUI should be aesthetically pleasing and easy to navigate.
 *   Use clear and concise language in the user interface.
 *   Provide helpful tooltips and documentation to guide users.
-* When implementing the TUI, make sure to use a modern aesthetic design with better colors, borders, and visual hierarchy. Aim for a beautiful theme system with a modern aesthetic (Catppuccin-inspired).
-* Redesign the TUI with stunning visuals: header, footer, borders, gradients.
+*   When implementing the TUI, make sure to use a modern aesthetic design with better colors, borders, and visual hierarchy. Aim for a beautiful theme system with a modern aesthetic (Catppuccin-inspired).
+*   Redesign the TUI with stunning visuals: header, footer, borders, gradients.
 
 ## ERROR HANDLING
 *   Implement robust error handling to prevent unexpected crashes.
@@ -43,16 +43,16 @@ globs: *
 
 ## CODE ANALYSIS
 *   During the code analysis phase, focus on identifying Temporal workflows and activities.
-* The tool should identify:
-    * Workflows
-    * Activities
-    * Signals
-    * Queries
-    * Updates
-    * Timers
-    * Versioning
-    * Search Attributes
-    * Continue-as-New
+*   The tool should identify:
+    *   Workflows
+    *   Activities
+    *   Signals
+    *   Queries
+    *   Updates
+    *   Timers
+    *   Versioning
+    *   Search Attributes
+    *   Continue-as-New
 *   During the code analysis phase, focus on identifying Temporal workflow and activity calls within a function.
 
 ## DEPENDENCY MANAGEMENT
@@ -60,49 +60,52 @@ globs: *
 *   Keep dependencies up-to-date.
 
 ## EXPORT FUNCTIONALITY
-* The tool should be able to export the analysis in multiple formats, including:
-    * JSON
-    * DOT (Graphviz)
-    * Mermaid
-    * Markdown
+*   The tool should be able to export the analysis in multiple formats, including:
+    *   JSON
+    *   DOT (Graphviz)
+    *   Mermaid
+    *   Markdown
 
 ## NAVIGATION
-* Ensure the TUI navigation flow is intuitive.
+*   Ensure the TUI navigation flow is intuitive.
+*   When viewing a node's details and pressing Enter on an internal call, dynamically parse the source file at runtime to find what functions that internal call invokes. Only attempt to navigate to local functions.
 
 ## FILTERING
-* In the list view, initially prioritize showing only top-level workflows (those with no parents).
-* The initial view should only show top-level workflows from the tree.
-* The initial view should only show top-level workflows from the tree.
-* Provide options to toggle the visibility of activities, signals, and other components.
-* The `/` search function should not shift the layout down, and should react to typing.
-* When a filter is active, it should be visually clear in the TUI.
+*   In the list view, initially prioritize showing only top-level workflows (those with no parents).
+*   The initial view should only show top-level workflows from the tree.
+*   The initial view should only show top-level workflows from the tree.
+*   Provide options to toggle the visibility of activities, signals, and other components.
+*   The `/` search function should not shift the layout down and should react to typing.
+*   When a filter is active, it should be visually clear in the TUI.
 
 ## INTERNAL CALLS
-* The tool should also track "internal" non-Temporal function calls within Activities
-* The TUI should display Internal Calls, and also enable drill-down navigation into those function definitions
-* When viewing a node's details and pressing Enter on an internal call, dynamically parse the source file at runtime to find what functions that internal call invokes. Only attempt to navigate to local functions.
+*   The tool should also track "internal" non-Temporal function calls within Activities
+*   The TUI should display Internal Calls, and also enable drill-down navigation into those function definitions
+*   The TUI should also show "calls" and "called by" in the details view.
+*   The details view should always show "Calls" and "Called By" sections, even if they're empty
 
 ## THEME
-* Follow the defined theme.
+*   Follow the defined theme.
 
 ## GENERAL BEHAVIOR
-* The TUI should mostly always also show "calls" and "called by" in the details view.
-* The details view should always show "Calls" and "Called By" sections, even if they're empty
-* The TUI should mostly always also show "calls" and "called by" in the details view.
+*   The TUI should also show "calls" and "called by" in the details view.
+*   The details view should always show "Calls" and "Called By" sections, even if they're empty
+*   The TUI should also show "calls" and "called by" in the details view.
+*   The list view should only show top-level workflows from the tree.
 
 ## GENERAL NOTES
-* Add new views: Stats dashboard, Graph visualization, Help overlay.
-* Implement a keyboard shortcut system with a help panel.
-* Add workflow search with fuzzy matching.
-* Create export functionality (DOT, Mermaid, Markdown).
-* The tool should be able to export the analysis in multiple formats, including DOT (Graphviz), Mermaid, and Markdown.
-* The TUI should be aesthetically pleasing and easy to navigate.
-* Use clear and concise language in the user interface.
-* Provide helpful tooltips and documentation to guide users.
-* Implement robust error handling to prevent unexpected crashes.
-* Log errors and provide informative error messages to the user.
-* In the details view, show internal calls (non-Temporal function calls) within Activities.
-* In the tree view, provide options to group the workflow by package or call hierarchy.
-* In the tree view, show internal calls (non-Temporal function calls) within Activities.
-* In the tree view, provide options to group the workflow by package or call hierarchy.
-* In the tree view, "by package" should use FQNs (grouping by common parent), otherwise it's too many.
+*   Add new views: Stats dashboard, Graph visualization, Help overlay.
+*   Implement a keyboard shortcut system with a help panel.
+*   Add workflow search with fuzzy matching.
+*   Create export functionality (DOT, Mermaid, Markdown).
+*   The tool should be able to export the analysis in multiple formats, including DOT (Graphviz), Mermaid, and Markdown.
+*   The TUI should be aesthetically pleasing and easy to navigate.
+*   Use clear and concise language in the user interface.
+*   Provide helpful tooltips and documentation to guide users.
+*   Implement robust error handling to prevent unexpected crashes.
+*   Log errors and provide informative error messages to the user.
+*   In the details view, show internal calls (non-Temporal function calls) within Activities.
+*   In the tree view, provide options to group the workflow by package or call hierarchy.
+*   In the tree view, show internal calls (non-Temporal function calls) within Activities.
+*   In the tree view, provide options to group the workflow by package or call hierarchy.
+*   In the tree view, "by package" should use FQNs (grouping by common parent), otherwise it's too many.
