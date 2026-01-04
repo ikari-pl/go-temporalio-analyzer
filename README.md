@@ -3,8 +3,10 @@
 A **beautiful**, **production-ready** CLI/TUI tool for analyzing and visualizing Temporal.io workflow and activity connections in Go codebases.
 
 ![Demo](https://img.shields.io/badge/TUI-Beautiful-blueviolet?style=for-the-badge)
-![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go)
+![Go](https://img.shields.io/badge/Go-1.25+-00ADD8?style=for-the-badge&logo=go)
 ![Temporal](https://img.shields.io/badge/Temporal-SDK-FF6B6B?style=for-the-badge)
+[![codecov](https://codecov.io/gh/ikari-pl/go-temporalio-analyzer/branch/main/graph/badge.svg)](https://codecov.io/gh/ikari-pl/go-temporalio-analyzer)
+[![CI](https://github.com/ikari-pl/go-temporalio-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/ikari-pl/go-temporalio-analyzer/actions/workflows/ci.yml)
 
 If you find this tool useful, please consider buying me a coffee!
 [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/A0A4GUGRG)
@@ -50,9 +52,33 @@ If you find this tool useful, please consider buying me a coffee!
 
 ## 📦 Installation
 
+### Using Make (Recommended)
+
 ```bash
-cd cmd/temporal-analyzer
-go build -o temporal-analyzer
+# Clone the repository
+git clone https://github.com/ikari-pl/go-temporalio-analyzer.git
+cd go-temporalio-analyzer
+
+# Build the binary
+make build
+
+# Install to ~/.local/bin (make sure it's in your PATH)
+make install
+
+# Or install globally (requires sudo)
+make install-global
+```
+
+### Using Go Install
+
+```bash
+go install github.com/ikari-pl/go-temporalio-analyzer@latest
+```
+
+### From Source
+
+```bash
+go build -o temporal-analyzer .
 ```
 
 ## 🎯 Usage
@@ -60,7 +86,14 @@ go build -o temporal-analyzer
 ### Interactive TUI Mode (Default)
 
 ```bash
-./temporal-analyzer
+# Analyze current directory
+temporal-analyzer
+
+# Analyze a specific project (positional argument)
+temporal-analyzer /path/to/your/project
+
+# Or use the --root flag
+temporal-analyzer --root /path/to/your/project
 ```
 
 Opens a beautiful terminal interface where you can:
@@ -73,17 +106,20 @@ Opens a beautiful terminal interface where you can:
 
 ```bash
 # Export to JSON
-./temporal-analyzer -format=json > graph.json
+temporal-analyzer --format json > graph.json
 
 # Generate Graphviz DOT file
-./temporal-analyzer -format=dot > temporal.dot
+temporal-analyzer --format dot > temporal.dot
 dot -Tpng temporal.dot -o temporal-graph.png
 
 # Generate Mermaid diagram
-./temporal-analyzer -format=mermaid > diagram.md
+temporal-analyzer --format mermaid > diagram.md
 
 # Generate Markdown documentation
-./temporal-analyzer -format=markdown > TEMPORAL.md
+temporal-analyzer --format markdown > TEMPORAL.md
+
+# Combine positional path with export format
+temporal-analyzer /path/to/project --format mermaid
 ```
 
 ### Debug View Modes (No Interaction)
@@ -108,35 +144,38 @@ The lint mode provides non-interactive analysis with proper exit codes for CI/CD
 
 ```bash
 # Run lint analysis (exit code 0 if no errors, 1 otherwise)
-./temporal-analyzer --lint
+temporal-analyzer --lint
+
+# Lint a specific project
+temporal-analyzer --lint /path/to/project
 
 # Strict mode - treat warnings as errors
-./temporal-analyzer --lint --lint-strict
+temporal-analyzer --lint --lint-strict
 
 # List all available lint rules
-./temporal-analyzer --lint-rules
+temporal-analyzer --lint-rules
 
 # Output in different formats
-./temporal-analyzer --lint --lint-format=text      # Human-readable (default)
-./temporal-analyzer --lint --lint-format=json      # Machine-parseable JSON
-./temporal-analyzer --lint --lint-format=github    # GitHub Actions annotations
-./temporal-analyzer --lint --lint-format=sarif     # SARIF format (GitHub Code Scanning)
-./temporal-analyzer --lint --lint-format=checkstyle # Checkstyle XML
+temporal-analyzer --lint --lint-format text      # Human-readable (default)
+temporal-analyzer --lint --lint-format json      # Machine-parseable JSON
+temporal-analyzer --lint --lint-format github    # GitHub Actions annotations
+temporal-analyzer --lint --lint-format sarif     # SARIF format (GitHub Code Scanning)
+temporal-analyzer --lint --lint-format checkstyle # Checkstyle XML
 
 # Disable specific rules
-./temporal-analyzer --lint --lint-disable=TA001,TA002
+temporal-analyzer --lint --lint-disable TA001,TA002
 
 # Only run specific rules
-./temporal-analyzer --lint --lint-enable=TA010,TA020
+temporal-analyzer --lint --lint-enable TA010,TA020
 
 # Set minimum severity level
-./temporal-analyzer --lint --lint-level=warning   # error, warning, info
+temporal-analyzer --lint --lint-level warning   # error, warning, info
 
 # Configure thresholds
-./temporal-analyzer --lint --lint-max-fan-out=20 --lint-max-depth=15
+temporal-analyzer --lint --lint-max-fan-out 20 --lint-max-depth 15
 
 # Output to file
-./temporal-analyzer --lint --lint-format=sarif --output=results.sarif
+temporal-analyzer --lint --lint-format sarif --output results.sarif
 ```
 
 #### GitHub Actions Example
@@ -154,13 +193,13 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.21'
+          go-version: '1.25'
       
       - name: Install Temporal Analyzer
         run: go install github.com/ikari-pl/go-temporalio-analyzer@latest
       
       - name: Run Lint
-        run: temporal-analyzer --lint --lint-format=github --lint-strict
+        run: temporal-analyzer --lint --lint-format github --lint-strict .
 ```
 
 #### Available Lint Rules
@@ -205,23 +244,27 @@ Example fix in JSON output:
 ### Advanced Options
 
 ```bash
-# Analyze specific directory
-./temporal-analyzer -root=./pkg/workflows
+# Analyze specific directory (positional or flag)
+temporal-analyzer ./pkg/workflows
+temporal-analyzer --root ./pkg/workflows
 
 # Include test files
-./temporal-analyzer -include-tests
+temporal-analyzer --include-tests
 
 # Filter by package name (regex)
-./temporal-analyzer -package=".*workflow.*"
+temporal-analyzer --package ".*workflow.*"
 
 # Filter by function name (regex)
-./temporal-analyzer -name=".*Employee.*"
+temporal-analyzer --name ".*Employee.*"
 
 # Verbose logging
-./temporal-analyzer -verbose
+temporal-analyzer --verbose
 
 # Debug mode
-./temporal-analyzer -debug
+temporal-analyzer --debug
+
+# Version info
+temporal-analyzer --version
 ```
 
 ## ⌨️ Keyboard Shortcuts

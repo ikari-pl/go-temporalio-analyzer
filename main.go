@@ -16,11 +16,26 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 )
 
+// Version information (set via ldflags)
+var (
+	Version   = "dev"
+	BuildTime = "unknown"
+)
+
 func main() {
+	// Handle --version before anything else (check args directly)
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-version" || arg == "-v" {
+			fmt.Printf("temporal-analyzer %s\n", Version)
+			fmt.Printf("Built: %s\n", BuildTime)
+			return
+		}
+	}
+
 	// Create config
 	cfg := config.NewConfig()
 
-	// Parse command line flags first
+	// Parse command line flags
 	if err := cfg.ParseFlags(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)

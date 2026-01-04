@@ -73,34 +73,133 @@ func NewConfig() *Config {
 }
 
 // ParseFlags parses command line flags and updates the config.
+// Supports optional positional argument anywhere: temporal-analyzer [flags] [path] [flags]
+// The path can appear before, after, or between flags.
 func (c *Config) ParseFlags() error {
-	flag.StringVar(&c.RootDir, "root", c.RootDir, "Root directory to analyze")
-	flag.StringVar(&c.FilterPackage, "package", c.FilterPackage, "Filter by package name (regex)")
-	flag.StringVar(&c.FilterName, "name", c.FilterName, "Filter by function name (regex)")
-	flag.StringVar(&c.OutputFormat, "format", c.OutputFormat, "Output format (tui, json, tree, dot)")
-	flag.StringVar(&c.OutputFile, "output", c.OutputFile, "Output file (defaults to stdout)")
-	flag.StringVar(&c.GraphTool, "graph-tool", c.GraphTool, "Graph layout tool (dot, fdp, neato, circo)")
-	flag.BoolVar(&c.IncludeTests, "include-tests", c.IncludeTests, "Include test files in analysis")
-	flag.BoolVar(&c.ShowWorkflows, "workflows", c.ShowWorkflows, "Show workflows")
-	flag.BoolVar(&c.ShowActivities, "activities", c.ShowActivities, "Show activities")
-	flag.BoolVar(&c.Verbose, "verbose", c.Verbose, "Verbose output")
-	flag.BoolVar(&c.Debug, "debug", c.Debug, "Debug output")
-	flag.StringVar(&c.DebugView, "debug-view", c.DebugView, "Debug view rendering (list, tree, details)")
+	// Pre-process args to extract positional path argument from anywhere in the command line
+	// This allows: `temporal-analyzer --lint . --format json` to work correctly
+	args, positionalPath := extractPositionalPath(os.Args[1:])
+
+	// Create a new flag set for clean parsing
+	fs := flag.NewFlagSet(os.Args[0], flag.ExitOnError)
+
+	// Track if --root was explicitly set
+	rootSet := false
+
+	fs.StringVar(&c.RootDir, "root", c.RootDir, "Root directory to analyze (alternative: positional arg)")
+	fs.StringVar(&c.FilterPackage, "package", c.FilterPackage, "Filter by package name (regex)")
+	fs.StringVar(&c.FilterName, "name", c.FilterName, "Filter by function name (regex)")
+	fs.StringVar(&c.OutputFormat, "format", c.OutputFormat, "Output format (tui, json, tree, dot)")
+	fs.StringVar(&c.OutputFile, "output", c.OutputFile, "Output file (defaults to stdout)")
+	fs.StringVar(&c.GraphTool, "graph-tool", c.GraphTool, "Graph layout tool (dot, fdp, neato, circo)")
+	fs.BoolVar(&c.IncludeTests, "include-tests", c.IncludeTests, "Include test files in analysis")
+	fs.BoolVar(&c.ShowWorkflows, "workflows", c.ShowWorkflows, "Show workflows")
+	fs.BoolVar(&c.ShowActivities, "activities", c.ShowActivities, "Show activities")
+	fs.BoolVar(&c.Verbose, "verbose", c.Verbose, "Verbose output")
+	fs.BoolVar(&c.Debug, "debug", c.Debug, "Debug output")
+	fs.StringVar(&c.DebugView, "debug-view", c.DebugView, "Debug view rendering (list, tree, details)")
 
 	// Lint flags
-	flag.BoolVar(&c.LintMode, "lint", c.LintMode, "Enable lint mode for CI (non-interactive)")
-	flag.StringVar(&c.LintFormat, "lint-format", c.LintFormat, "Lint output format (text, json, github, sarif, checkstyle)")
-	flag.BoolVar(&c.LintStrict, "lint-strict", c.LintStrict, "Treat warnings as errors (useful for CI)")
-	flag.StringVar(&c.LintMinSeverity, "lint-level", c.LintMinSeverity, "Minimum severity to report (error, warning, info)")
-	flag.StringVar(&c.LintDisabledRules, "lint-disable", c.LintDisabledRules, "Comma-separated rule IDs to disable")
-	flag.StringVar(&c.LintEnabledRules, "lint-enable", c.LintEnabledRules, "Comma-separated rule IDs to enable (exclusive)")
-	flag.BoolVar(&c.LintListRules, "lint-rules", c.LintListRules, "List all available lint rules and exit")
-	flag.IntVar(&c.LintMaxFanOut, "lint-max-fan-out", c.LintMaxFanOut, "Max fan-out before warning (default: 15)")
-	flag.IntVar(&c.LintMaxCallDepth, "lint-max-depth", c.LintMaxCallDepth, "Max call chain depth before warning (default: 10)")
+	fs.BoolVar(&c.LintMode, "lint", c.LintMode, "Enable lint mode for CI (non-interactive)")
+	fs.StringVar(&c.LintFormat, "lint-format", c.LintFormat, "Lint output format (text, json, github, sarif, checkstyle)")
+	fs.BoolVar(&c.LintStrict, "lint-strict", c.LintStrict, "Treat warnings as errors (useful for CI)")
+	fs.StringVar(&c.LintMinSeverity, "lint-level", c.LintMinSeverity, "Minimum severity to report (error, warning, info)")
+	fs.StringVar(&c.LintDisabledRules, "lint-disable", c.LintDisabledRules, "Comma-separated rule IDs to disable")
+	fs.StringVar(&c.LintEnabledRules, "lint-enable", c.LintEnabledRules, "Comma-separated rule IDs to enable (exclusive)")
+	fs.BoolVar(&c.LintListRules, "lint-rules", c.LintListRules, "List all available lint rules and exit")
+	fs.IntVar(&c.LintMaxFanOut, "lint-max-fan-out", c.LintMaxFanOut, "Max fan-out before warning (default: 15)")
+	fs.IntVar(&c.LintMaxCallDepth, "lint-max-depth", c.LintMaxCallDepth, "Max call chain depth before warning (default: 10)")
 
-	flag.Parse()
+	// Custom usage message
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [flags] [path] [flags]\n\n", os.Args[0])
+		fmt.Fprintf(os.Stderr, "Analyze Temporal.io workflows and activities in a Go project.\n\n")
+		fmt.Fprintf(os.Stderr, "Arguments:\n")
+		fmt.Fprintf(os.Stderr, "  path\n")
+		fmt.Fprintf(os.Stderr, "        Path to the project to analyze (default: current directory)\n")
+		fmt.Fprintf(os.Stderr, "        Can appear anywhere in the command line\n\n")
+		fmt.Fprintf(os.Stderr, "Flags:\n")
+		fs.PrintDefaults()
+	}
+
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+
+	// Check if --root was explicitly provided
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "root" {
+			rootSet = true
+		}
+	})
+
+	// Use positional path if found and --root wasn't explicitly set
+	if positionalPath != "" && !rootSet {
+		c.RootDir = positionalPath
+	}
 
 	return c.Validate()
+}
+
+// extractPositionalPath separates flags from a positional path argument.
+// It identifies the first argument that looks like a path (doesn't start with -)
+// and isn't a value for a flag that takes a value.
+// Returns the filtered args (flags only) and the extracted path.
+func extractPositionalPath(args []string) ([]string, string) {
+	if len(args) == 0 {
+		return args, ""
+	}
+
+	// Flags that take a value (need to skip their next arg)
+	flagsWithValue := map[string]bool{
+		"-root": true, "--root": true,
+		"-package": true, "--package": true,
+		"-name": true, "--name": true,
+		"-format": true, "--format": true,
+		"-output": true, "--output": true,
+		"-graph-tool": true, "--graph-tool": true,
+		"-debug-view": true, "--debug-view": true,
+		"-lint-format": true, "--lint-format": true,
+		"-lint-level": true, "--lint-level": true,
+		"-lint-disable": true, "--lint-disable": true,
+		"-lint-enable": true, "--lint-enable": true,
+		"-lint-max-fan-out": true, "--lint-max-fan-out": true,
+		"-lint-max-depth": true, "--lint-max-depth": true,
+	}
+
+	// Pre-allocate with capacity hint for efficiency
+	filtered := make([]string, 0, len(args))
+	var positionalPath string
+	skipNext := false
+
+	for i, arg := range args {
+		if skipNext {
+			filtered = append(filtered, arg)
+			skipNext = false
+			continue
+		}
+
+		// Check if this is a flag
+		if strings.HasPrefix(arg, "-") {
+			filtered = append(filtered, arg)
+
+			// Check if this flag takes a value (and value isn't using = syntax)
+			if flagsWithValue[arg] && !strings.Contains(arg, "=") {
+				skipNext = true
+			}
+			continue
+		}
+
+		// This is a non-flag argument - treat as path if we haven't found one yet
+		if positionalPath == "" {
+			positionalPath = arg
+		} else {
+			// Multiple positional args - keep subsequent ones (shouldn't happen, but be safe)
+			_ = i // silence unused warning
+		}
+	}
+
+	return filtered, positionalPath
 }
 
 // Validate validates the configuration.

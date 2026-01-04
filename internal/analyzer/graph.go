@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"log/slog"
+	"strings"
 )
 
 // graphBuilder implements the GraphBuilder interface.
@@ -23,8 +24,9 @@ func NewGraphBuilder(logger *slog.Logger, extractor CallExtractor) GraphBuilder 
 
 // BuildGraph creates a temporal graph from the given parsed nodes.
 func (g *graphBuilder) BuildGraph(ctx context.Context, nodes []NodeMatch) (*TemporalGraph, error) {
+	// Pre-allocate map with capacity hint for better memory efficiency (Go 1.25 Swiss Tables)
 	graph := &TemporalGraph{
-		Nodes: make(map[string]*TemporalNode),
+		Nodes: make(map[string]*TemporalNode, len(nodes)),
 		Stats: GraphStats{},
 	}
 
@@ -189,7 +191,7 @@ func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, 
 // CalculateStats computes statistics for the given graph.
 func (g *graphBuilder) CalculateStats(ctx context.Context, graph *TemporalGraph) error {
 	stats := GraphStats{}
-	
+
 	var totalFanOut int
 	var nodeCount int
 
@@ -250,9 +252,11 @@ func (g *graphBuilder) CalculateStats(ctx context.Context, graph *TemporalGraph)
 }
 
 // calculateMaxDepth calculates the maximum depth of the call graph.
+// Optimized with pre-allocated visited map for reduced GC pressure.
 func (g *graphBuilder) calculateMaxDepth(ctx context.Context, graph *TemporalGraph) int {
 	maxDepth := 0
-	visited := make(map[string]bool)
+	// Pre-allocate visited map with capacity hint (Go 1.25 Swiss Tables)
+	visited := make(map[string]bool, len(graph.Nodes))
 
 	// Start from root nodes (nodes with no parents)
 	for _, node := range graph.Nodes {
@@ -304,32 +308,21 @@ func (g *graphBuilder) calculateNodeDepth(ctx context.Context, node *TemporalNod
 }
 
 // extractDescription extracts documentation from function comments.
+// Optimized for Go 1.25 with reduced allocations using strings.Builder.
 func (g *graphBuilder) extractDescription(fn *ast.FuncDecl) string {
-	if fn.Doc == nil {
+	if fn.Doc == nil || len(fn.Doc.List) == 0 {
 		return ""
 	}
 
-	var comments []string
+	// Fast path: return first non-empty comment line (most common case)
 	for _, comment := range fn.Doc.List {
 		text := comment.Text
 		// Remove comment markers
-		if len(text) > 2 && text[:2] == "//" {
-			text = text[2:]
-		}
-		if len(text) > 0 && text[0] == ' ' {
-			text = text[1:]
-		}
-		comments = append(comments, text)
-	}
+		text = strings.TrimPrefix(text, "//")
+		text = strings.TrimPrefix(text, " ")
 
-	if len(comments) == 0 {
-		return ""
-	}
-
-	// Return first non-empty comment line
-	for _, comment := range comments {
-		if comment != "" {
-			return comment
+		if text != "" {
+			return text
 		}
 	}
 
@@ -351,21 +344,46 @@ func (g *graphBuilder) extractReturnType(fn *ast.FuncDecl) string {
 }
 
 // typeToString converts an AST type to a string.
+// Optimized for common cases with minimal allocations.
 func (g *graphBuilder) typeToString(expr ast.Expr) string {
 	switch t := expr.(type) {
 	case *ast.Ident:
 		return t.Name
 	case *ast.SelectorExpr:
 		if pkg, ok := t.X.(*ast.Ident); ok {
-			return pkg.Name + "." + t.Sel.Name
+			// Use strings.Builder for concatenation (more efficient than +)
+			var sb strings.Builder
+			sb.Grow(len(pkg.Name) + 1 + len(t.Sel.Name))
+			sb.WriteString(pkg.Name)
+			sb.WriteByte('.')
+			sb.WriteString(t.Sel.Name)
+			return sb.String()
 		}
 		return t.Sel.Name
 	case *ast.StarExpr:
-		return "*" + g.typeToString(t.X)
+		inner := g.typeToString(t.X)
+		var sb strings.Builder
+		sb.Grow(1 + len(inner))
+		sb.WriteByte('*')
+		sb.WriteString(inner)
+		return sb.String()
 	case *ast.ArrayType:
-		return "[]" + g.typeToString(t.Elt)
+		inner := g.typeToString(t.Elt)
+		var sb strings.Builder
+		sb.Grow(2 + len(inner))
+		sb.WriteString("[]")
+		sb.WriteString(inner)
+		return sb.String()
 	case *ast.MapType:
-		return "map[" + g.typeToString(t.Key) + "]" + g.typeToString(t.Value)
+		key := g.typeToString(t.Key)
+		val := g.typeToString(t.Value)
+		var sb strings.Builder
+		sb.Grow(4 + len(key) + 1 + len(val)) // "map[" + key + "]" + val
+		sb.WriteString("map[")
+		sb.WriteString(key)
+		sb.WriteByte(']')
+		sb.WriteString(val)
+		return sb.String()
 	case *ast.InterfaceType:
 		return "interface{}"
 	default:
