@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"temporal-analyzer/internal/analyzer"
@@ -363,7 +364,13 @@ func (tv *treeView) Render(state *State) string {
 		selectionInfo = fmt.Sprintf(" │ %d/%d", state.TreeState.SelectedIndex+1, len(state.TreeState.Items))
 	}
 
-	header := headerStyle.Render("🌳 WORKFLOW HIERARCHY" + selectionInfo)
+	// Show different title based on grouping mode
+	title := "🌳 CALL HIERARCHY"
+	if state.TreeState != nil && state.TreeState.GroupBy == "package" {
+		title = "📦 BY PACKAGE"
+	}
+
+	header := headerStyle.Render(title + selectionInfo)
 
 	// Gradient line
 	gradient := tv.renderGradient(width, "#7ee787", "#58a6ff")
@@ -372,7 +379,7 @@ func (tv *treeView) Render(state *State) string {
 	content := tv.buildTreeContent(state, height)
 
 	// Footer
-	footer := tv.renderFooter(width)
+	footer := tv.renderFooter(state, width)
 
 	return header + "\n" + gradient + "\n" + content + "\n" + footer
 }
@@ -395,18 +402,25 @@ func (tv *treeView) renderGradient(width int, startColor, endColor string) strin
 }
 
 // renderFooter creates the footer for tree view.
-func (tv *treeView) renderFooter(width int) string {
+func (tv *treeView) renderFooter(state *State, width int) string {
+	viewMode := "hierarchy"
+	if state.TreeState != nil && state.TreeState.GroupBy == "package" {
+		viewMode = "package"
+	}
+	
 	bindings := []struct {
 		key   string
 		label string
 	}{
 		{"j/k", "Navigate"},
-		{"h/l", "Collapse/Expand"},
-		{"Enter", "Details"},
-		{"e", "Expand All"},
-		{"c", "Collapse All"},
+		{"h/l", "±"},
+		{"Enter", "Open"},
+		{"p", "ByPkg"},
+		{"H", "ByCall"},
 		{"q", "Back"},
 	}
+	
+	_ = viewMode // Will use for display
 
 	keyStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#7ee787")).
@@ -453,10 +467,14 @@ func (tv *treeView) Update(msg tea.Msg, state *State) (*State, tea.Cmd) {
 					if state.TreeState.ExpansionStates == nil {
 						state.TreeState.ExpansionStates = make(map[string]bool)
 					}
-					selectedNodeName := selectedItem.Node.Name
-					state.TreeState.ExpansionStates[selectedNodeName] = true
+					// Get the key for expansion state (node name or display text for packages)
+					expansionKey := selectedItem.DisplayText
+					if selectedItem.Node != nil {
+						expansionKey = selectedItem.Node.Name
+					}
+					state.TreeState.ExpansionStates[expansionKey] = true
 					tv.buildTreeItems(state)
-					tv.restoreSelection(state, selectedNodeName)
+					tv.restoreSelection(state, expansionKey)
 				}
 			}
 			return state, nil
@@ -468,11 +486,38 @@ func (tv *treeView) Update(msg tea.Msg, state *State) (*State, tea.Cmd) {
 					if state.TreeState.ExpansionStates == nil {
 						state.TreeState.ExpansionStates = make(map[string]bool)
 					}
-					selectedNodeName := selectedItem.Node.Name
-					state.TreeState.ExpansionStates[selectedNodeName] = false
+					expansionKey := selectedItem.DisplayText
+					if selectedItem.Node != nil {
+						expansionKey = selectedItem.Node.Name
+					}
+					state.TreeState.ExpansionStates[expansionKey] = false
 					tv.buildTreeItems(state)
-					tv.restoreSelection(state, selectedNodeName)
+					tv.restoreSelection(state, expansionKey)
 				}
+			}
+			return state, nil
+
+		case "p":
+			// Toggle to package view
+			if state.TreeState != nil {
+				state.TreeState.GroupBy = "package"
+				state.TreeState.ExpansionStates = make(map[string]bool)
+				state.TreeState.SelectedIndex = 0
+				tv.buildTreeItems(state)
+				state.StatusMessage = "Grouped by package"
+				state.StatusType = "info"
+			}
+			return state, nil
+
+		case "H":
+			// Toggle to hierarchy view
+			if state.TreeState != nil {
+				state.TreeState.GroupBy = "hierarchy"
+				state.TreeState.ExpansionStates = make(map[string]bool)
+				state.TreeState.SelectedIndex = 0
+				tv.buildTreeItems(state)
+				state.StatusMessage = "Call hierarchy view"
+				state.StatusType = "info"
 			}
 			return state, nil
 
@@ -481,7 +526,11 @@ func (tv *treeView) Update(msg tea.Msg, state *State) (*State, tea.Cmd) {
 			if state.TreeState != nil {
 				for _, item := range state.TreeState.Items {
 					if item.HasChildren {
-						state.TreeState.ExpansionStates[item.Node.Name] = true
+						key := item.DisplayText
+						if item.Node != nil {
+							key = item.Node.Name
+						}
+						state.TreeState.ExpansionStates[key] = true
 					}
 				}
 				tv.buildTreeItems(state)
@@ -500,6 +549,16 @@ func (tv *treeView) Update(msg tea.Msg, state *State) (*State, tea.Cmd) {
 		case "enter":
 			if state.TreeState != nil && state.TreeState.SelectedIndex < len(state.TreeState.Items) {
 				selectedItem := state.TreeState.Items[state.TreeState.SelectedIndex]
+
+				// For package headers (nil Node), toggle expansion instead
+				if selectedItem.Node == nil {
+					if selectedItem.HasChildren {
+						expansionKey := selectedItem.DisplayText
+						state.TreeState.ExpansionStates[expansionKey] = !selectedItem.IsExpanded
+						tv.buildTreeItems(state)
+					}
+					return state, nil
+				}
 
 				state.Navigator.PushState(ViewState{
 					View:      ViewTree,
@@ -595,9 +654,6 @@ func (tv *treeView) renderTreeItem(item TreeItem, isSelected bool) string {
 		expandIcon = "•"
 	}
 
-	// Node type icon with color
-	nodeIcon := getNodeIcon(item.Node.Type)
-
 	// Build the line
 	var line strings.Builder
 	if item.Depth > 0 {
@@ -613,13 +669,35 @@ func (tv *treeView) renderTreeItem(item TreeItem, isSelected bool) string {
 		expandStyle = expandStyle.Foreground(lipgloss.Color("#7ee787"))
 	}
 
-	itemText := fmt.Sprintf(" %s %s %s",
-		expandStyle.Render(expandIcon),
-		nodeIcon,
-		nameStyle.Render(item.Node.Name))
-
-	if item.HasChildren && item.ChildCount > 0 {
-		itemText += countStyle.Render(fmt.Sprintf(" (%d)", item.ChildCount))
+	// Handle package headers (nil Node) vs regular nodes
+	var itemText string
+	if item.Node == nil {
+		// Package/directory header
+		pkgStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ffa657")).Bold(true)
+		displayName := item.DisplayText
+		if displayName == "" {
+			displayName = "(root)"
+		}
+		itemText = fmt.Sprintf(" %s 📁 %s",
+			expandStyle.Render(expandIcon),
+			pkgStyle.Render(displayName))
+		if item.HasChildren && item.ChildCount > 0 {
+			itemText += countStyle.Render(fmt.Sprintf(" (%d)", item.ChildCount))
+		}
+	} else {
+		// Regular node
+		nodeIcon := getNodeIcon(item.Node.Type)
+		displayName := item.Node.Name
+		if item.DisplayText != "" {
+			displayName = item.DisplayText
+		}
+		itemText = fmt.Sprintf(" %s %s %s",
+			expandStyle.Render(expandIcon),
+			nodeIcon,
+			nameStyle.Render(displayName))
+		if item.HasChildren && item.ChildCount > 0 {
+			itemText += countStyle.Render(fmt.Sprintf(" (%d)", item.ChildCount))
+		}
 	}
 
 	line.WriteString(itemText)
@@ -644,11 +722,26 @@ func (tv *treeView) buildTreeItems(state *State) {
 	if state.TreeState == nil {
 		state.TreeState = &TreeViewState{
 			ExpansionStates: make(map[string]bool),
+			GroupBy:         "hierarchy",
 		}
 	}
 
 	state.TreeState.Items = []TreeItem{}
 
+	if state.TreeState.GroupBy == "package" {
+		tv.buildTreeByPackage(state)
+	} else {
+		tv.buildTreeByHierarchy(state)
+	}
+
+	// Ensure SelectedIndex is within bounds
+	if len(state.TreeState.Items) > 0 && state.TreeState.SelectedIndex >= len(state.TreeState.Items) {
+		state.TreeState.SelectedIndex = 0
+	}
+}
+
+// buildTreeByHierarchy builds tree as call hierarchy.
+func (tv *treeView) buildTreeByHierarchy(state *State) {
 	// Find root nodes (nodes with no parents)
 	var rootNodes []*analyzer.TemporalNode
 	for _, node := range state.Graph.Nodes {
@@ -667,11 +760,186 @@ func (tv *treeView) buildTreeItems(state *State) {
 	for _, root := range rootNodes {
 		tv.addTreeItemRecursive(state, root, 0, state.TreeState.ExpansionStates, visited)
 	}
+}
 
-	// Ensure SelectedIndex is within bounds
-	if len(state.TreeState.Items) > 0 && state.TreeState.SelectedIndex >= len(state.TreeState.Items) {
-		state.TreeState.SelectedIndex = 0
+// packageTreeNode represents a node in the package directory tree.
+type packageTreeNode struct {
+	name     string
+	fullPath string
+	children map[string]*packageTreeNode
+	nodes    []*analyzer.TemporalNode
+}
+
+// buildTreeByPackage groups nodes by directory path with FQN hierarchy.
+func (tv *treeView) buildTreeByPackage(state *State) {
+	// Find common root path
+	var allPaths []string
+	for _, node := range state.Graph.Nodes {
+		if node.FilePath != "" {
+			allPaths = append(allPaths, filepath.Dir(node.FilePath))
+		}
 	}
+	commonRoot := findCommonPrefix(allPaths)
+
+	// Build a tree of directories using relative paths
+	root := &packageTreeNode{
+		name:     "",
+		fullPath: "",
+		children: make(map[string]*packageTreeNode),
+	}
+
+	// Group nodes by directory (using relative paths)
+	for _, node := range state.Graph.Nodes {
+		if node.FilePath == "" {
+			continue
+		}
+		dir := filepath.Dir(node.FilePath)
+		relPath := strings.TrimPrefix(dir, commonRoot)
+		relPath = strings.TrimPrefix(relPath, "/")
+
+		// Navigate/create the tree structure
+		current := root
+		if relPath != "" {
+			parts := strings.Split(relPath, "/")
+			pathSoFar := ""
+			for _, part := range parts {
+				if pathSoFar == "" {
+					pathSoFar = part
+				} else {
+					pathSoFar = pathSoFar + "/" + part
+				}
+				if current.children[part] == nil {
+					current.children[part] = &packageTreeNode{
+						name:     part,
+						fullPath: pathSoFar, // Relative path for cleaner display
+						children: make(map[string]*packageTreeNode),
+					}
+				}
+				current = current.children[part]
+			}
+		}
+		current.nodes = append(current.nodes, node)
+	}
+
+	// Collapse single-child chains for cleaner display
+	root = collapseSingleChildChains(root)
+
+	// Render the tree
+	tv.renderPackageTree(state, root, 0)
+}
+
+// findCommonPrefix finds the longest common directory prefix.
+func findCommonPrefix(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	if len(paths) == 1 {
+		return paths[0]
+	}
+
+	// Split first path into parts
+	first := strings.Split(paths[0], "/")
+	
+	// Find common prefix length
+	commonLen := len(first)
+	for _, p := range paths[1:] {
+		parts := strings.Split(p, "/")
+		for i := 0; i < commonLen && i < len(parts); i++ {
+			if parts[i] != first[i] {
+				commonLen = i
+				break
+			}
+		}
+		if len(parts) < commonLen {
+			commonLen = len(parts)
+		}
+	}
+
+	return strings.Join(first[:commonLen], "/")
+}
+
+// collapseSingleChildChains collapses chains like a/b/c where each has only one child.
+func collapseSingleChildChains(node *packageTreeNode) *packageTreeNode {
+	// First, recursively collapse children
+	for name, child := range node.children {
+		node.children[name] = collapseSingleChildChains(child)
+	}
+
+	// If this node has exactly one child and no nodes, merge with child
+	if len(node.children) == 1 && len(node.nodes) == 0 {
+		for childName, child := range node.children {
+			if node.name == "" {
+				return child
+			}
+			child.name = node.name + "/" + childName
+			return child
+		}
+	}
+
+	return node
+}
+
+// renderPackageTree renders the package tree recursively.
+func (tv *treeView) renderPackageTree(state *State, node *packageTreeNode, depth int) {
+	// Sort children by name
+	var childNames []string
+	for name := range node.children {
+		childNames = append(childNames, name)
+	}
+	sort.Strings(childNames)
+
+	// Render children directories
+	for _, name := range childNames {
+		child := node.children[name]
+		totalCount := tv.countNodesInTree(child)
+		isExpanded := state.TreeState.ExpansionStates[child.fullPath]
+
+		state.TreeState.Items = append(state.TreeState.Items, TreeItem{
+			Node:        nil,
+			Depth:       depth,
+			DisplayText: child.fullPath, // Full path for expansion key
+			HasChildren: totalCount > 0,
+			IsExpanded:  isExpanded,
+			ChildCount:  totalCount,
+		})
+
+		if isExpanded {
+			tv.renderPackageTree(state, child, depth+1)
+		}
+	}
+
+	// Render nodes at this level (if expanded or at root with nodes)
+	if len(node.nodes) > 0 {
+		// Sort nodes by type, then name
+		sort.Slice(node.nodes, func(i, j int) bool {
+			typeOrder := map[string]int{"workflow": 0, "activity": 1, "signal": 2, "query": 3, "update": 4}
+			ti, tj := typeOrder[node.nodes[i].Type], typeOrder[node.nodes[j].Type]
+			if ti != tj {
+				return ti < tj
+			}
+			return node.nodes[i].Name < node.nodes[j].Name
+		})
+
+		for _, n := range node.nodes {
+			state.TreeState.Items = append(state.TreeState.Items, TreeItem{
+				Node:        n,
+				Depth:       depth,
+				DisplayText: n.Name,
+				HasChildren: false,
+				IsExpanded:  false,
+				ChildCount:  len(n.CallSites),
+			})
+		}
+	}
+}
+
+// countNodesInTree counts all nodes in a package tree.
+func (tv *treeView) countNodesInTree(node *packageTreeNode) int {
+	count := len(node.nodes)
+	for _, child := range node.children {
+		count += tv.countNodesInTree(child)
+	}
+	return count
 }
 
 // addTreeItemRecursive adds a node and its children to the tree.
@@ -709,14 +977,19 @@ func (tv *treeView) addTreeItemRecursive(state *State, node *analyzer.TemporalNo
 	}
 }
 
-// restoreSelection finds and selects the item with the given node name.
-func (tv *treeView) restoreSelection(state *State, nodeName string) {
+// restoreSelection finds and selects the item with the given name.
+func (tv *treeView) restoreSelection(state *State, name string) {
 	if state.TreeState == nil {
 		return
 	}
 
 	for i, item := range state.TreeState.Items {
-		if item.Node.Name == nodeName {
+		// Check node name or display text (for package headers)
+		if item.Node != nil && item.Node.Name == name {
+			state.TreeState.SelectedIndex = i
+			return
+		}
+		if item.DisplayText == name {
 			state.TreeState.SelectedIndex = i
 			return
 		}

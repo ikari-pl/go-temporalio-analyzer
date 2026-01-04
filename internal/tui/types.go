@@ -96,6 +96,7 @@ type TreeViewState struct {
 	ExpansionStates map[string]bool // Node name -> expanded state
 	MaxVisibleDepth int
 	ShowOrphans     bool
+	GroupBy         string // "hierarchy" (default) or "package"
 }
 
 // DetailsViewState holds state specific to the details view.

@@ -494,17 +494,19 @@ func (m *model) restoreState(viewState ViewState) {
 	}
 }
 
-// buildTreeItems builds the tree items for the tree view.
+// buildTreeItems initializes the tree items for the tree view.
+// Note: The actual tree building logic is in treeView.buildTreeItems
 func (m *model) buildTreeItems() {
 	if m.state.TreeState == nil {
 		m.state.TreeState = &TreeViewState{
 			ExpansionStates: make(map[string]bool),
+			GroupBy:         "hierarchy",
 		}
 	}
 
+	// Use simplified hierarchy build for initial state
 	m.state.TreeState.Items = []TreeItem{}
 
-	// Find root nodes (nodes with no parents)
 	var rootNodes []*analyzer.TemporalNode
 	for _, node := range m.state.Graph.Nodes {
 		if len(node.Parents) == 0 {
@@ -512,12 +514,10 @@ func (m *model) buildTreeItems() {
 		}
 	}
 
-	// Sort root nodes by name
 	sort.Slice(rootNodes, func(i, j int) bool {
 		return rootNodes[i].Name < rootNodes[j].Name
 	})
 
-	// Build tree recursively
 	visited := make(map[string]bool)
 	for _, root := range rootNodes {
 		m.addTreeItemRecursive(root, 0, m.state.TreeState.ExpansionStates, visited)
