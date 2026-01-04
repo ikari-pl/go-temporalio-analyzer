@@ -307,11 +307,12 @@ func NoCommentFunc() {}
 	for _, decl := range file.Decls {
 		if fn, ok := decl.(*ast.FuncDecl); ok {
 			desc := builder.extractDescription(fn)
-			if fn.Name.Name == "MyWorkflow" {
+			switch fn.Name.Name {
+			case "MyWorkflow":
 				if desc == "" {
 					t.Error("Expected description for MyWorkflow")
 				}
-			} else if fn.Name.Name == "NoCommentFunc" {
+			case "NoCommentFunc":
 				if desc != "" {
 					t.Error("Expected empty description for NoCommentFunc")
 				}

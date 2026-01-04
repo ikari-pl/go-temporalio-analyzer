@@ -375,11 +375,6 @@ func TestJSONFormatterRoundTrip(t *testing.T) {
 	}
 }
 
-func TestJSONFormatterInterface(t *testing.T) {
-	// Verify that jsonFormatter implements Formatter interface
-	var _ Formatter = NewJSONFormatter()
-}
-
 func TestJSONFormatterEmptyWriter(t *testing.T) {
 	f := NewJSONFormatter()
 	graph := &analyzer.TemporalGraph{

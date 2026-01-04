@@ -348,11 +348,6 @@ func TestHighlightMatches(t *testing.T) {
 func TestFilterManagerWithNonListItems(t *testing.T) {
 	fm := NewFilterManager()
 
-	// Create items that are not ListItem type
-	type otherItem struct {
-		value string
-	}
-
 	// This should not panic and should return empty
 	items := []list.Item{}
 	result := fm.ApplyFilter(items, "test")

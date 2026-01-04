@@ -313,11 +313,8 @@ func TestRun(t *testing.T) {
 			// Create logger (suppress output)
 			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-			// Create mock TUI if needed
+			// Create mock TUI if needed (we leave it nil to test the nil case)
 			var tuiApp tui.TUI
-			if tt.cfg.OutputFormat == "tui" && tt.tuiErr == nil && tt.analyzerErr == nil {
-				// We don't initialize TUI to test the nil case
-			}
 
 			// Capture stdout for format tests
 			oldStdout := os.Stdout
@@ -328,9 +325,9 @@ func TestRun(t *testing.T) {
 			err := run(tt.cfg, logger, mockA, tuiApp)
 
 			// Restore stdout
-			w.Close()
+			_ = w.Close()
 			os.Stdout = oldStdout
-			io.Copy(io.Discard, r)
+			_, _ = io.Copy(io.Discard, r)
 
 			// Check error
 			if tt.expectError {
@@ -494,9 +491,9 @@ func TestRenderDebugView(t *testing.T) {
 			err := renderDebugView(cfg, tt.graph)
 
 			// Restore stdout
-			w.Close()
+			_ = w.Close()
 			os.Stdout = oldStdout
-			io.Copy(io.Discard, r)
+			_, _ = io.Copy(io.Discard, r)
 
 			if tt.expectError {
 				if err == nil {
@@ -542,9 +539,9 @@ func TestRenderDebugViewDetailsNoWorkflows(t *testing.T) {
 	err := renderDebugView(cfg, graph)
 
 	// Restore stdout
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
-	io.Copy(io.Discard, r)
+	_, _ = io.Copy(io.Discard, r)
 
 	if err != nil {
 		t.Errorf("renderDebugView() unexpected error: %v", err)
@@ -569,9 +566,9 @@ func TestRenderDebugViewEmptyGraph(t *testing.T) {
 	err := renderDebugView(cfg, graph)
 
 	// Restore stdout
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
-	io.Copy(io.Discard, r)
+	_, _ = io.Copy(io.Discard, r)
 
 	if err != nil {
 		t.Errorf("renderDebugView() unexpected error: %v", err)
@@ -613,9 +610,9 @@ func TestRenderDebugViewInitialItemsFallback(t *testing.T) {
 	err := renderDebugView(cfg, graph)
 
 	// Restore stdout
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
-	io.Copy(io.Discard, r)
+	_, _ = io.Copy(io.Discard, r)
 
 	if err != nil {
 		t.Errorf("renderDebugView() unexpected error: %v", err)
@@ -734,9 +731,9 @@ func TestRunLint(t *testing.T) {
 			code := runLint(tt.cfg, logger, mockA)
 
 			// Restore stdout
-			w.Close()
+			_ = w.Close()
 			os.Stdout = oldStdout
-			io.Copy(io.Discard, r)
+			_, _ = io.Copy(io.Discard, r)
 
 			if code != tt.expectedCode {
 				t.Errorf("runLint() = %d, want %d", code, tt.expectedCode)
@@ -772,9 +769,9 @@ func TestRunLintAnalyzerError(t *testing.T) {
 	code := runLint(cfg, logger, mockA)
 
 	// Restore stderr
-	w.Close()
+	_ = w.Close()
 	os.Stderr = oldStderr
-	io.Copy(io.Discard, r)
+	_, _ = io.Copy(io.Discard, r)
 
 	if code != 2 {
 		t.Errorf("runLint() with analyzer error = %d, want 2", code)
@@ -809,9 +806,9 @@ func TestRunLintNilGraph(t *testing.T) {
 	code := runLint(cfg, logger, mockA)
 
 	// Restore stderr
-	w.Close()
+	_ = w.Close()
 	os.Stderr = oldStderr
-	io.Copy(io.Discard, r)
+	_, _ = io.Copy(io.Discard, r)
 
 	if code != 2 {
 		t.Errorf("runLint() with nil graph = %d, want 2", code)
@@ -885,9 +882,9 @@ func TestRunLintWithInvalidOutputFile(t *testing.T) {
 	code := runLint(cfg, logger, mockA)
 
 	// Restore stderr
-	w.Close()
+	_ = w.Close()
 	os.Stderr = oldStderr
-	io.Copy(io.Discard, r)
+	_, _ = io.Copy(io.Discard, r)
 
 	if code != 2 {
 		t.Errorf("runLint() with invalid output file = %d, want 2", code)
@@ -933,9 +930,9 @@ func TestRunLintDisabledRules(t *testing.T) {
 	code := runLint(cfg, logger, mockA)
 
 	// Restore stdout
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
-	io.Copy(io.Discard, r)
+	_, _ = io.Copy(io.Discard, r)
 
 	// Should pass because rules are disabled
 	if code != 0 {
@@ -956,11 +953,11 @@ func TestListLintRules(t *testing.T) {
 	listLintRules()
 
 	// Restore stdout
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	_, _ = io.Copy(&buf, r)
 	output := buf.String()
 
 	// Check that the output contains expected content
@@ -1015,9 +1012,9 @@ func TestRunWithDebugView(t *testing.T) {
 	err := run(cfg, logger, mockA, nil)
 
 	// Restore stdout
-	w.Close()
+	_ = w.Close()
 	os.Stdout = oldStdout
-	io.Copy(io.Discard, r)
+	_, _ = io.Copy(io.Discard, r)
 
 	if err != nil {
 		t.Errorf("run() with debug view unexpected error: %v", err)

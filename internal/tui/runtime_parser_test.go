@@ -21,7 +21,7 @@ func TestRuntimeParserFindFunction(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create a go.mod file
 	goModContent := []byte("module testmodule\n\ngo 1.21\n")
@@ -128,7 +128,7 @@ func TestRuntimeParserFindFunctionInDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create go.mod
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test\ngo 1.21\n"), 0644); err != nil {
@@ -173,7 +173,7 @@ func TestRuntimeParserFindModuleRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create subdirectory structure
 	subDir := filepath.Join(tmpDir, "pkg", "sub")
@@ -203,7 +203,7 @@ func TestRuntimeParserFindModuleRoot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(noModDir)
+	defer func() { _ = os.RemoveAll(noModDir) }()
 
 	root = rp.findModuleRoot(noModDir)
 	if root != "" {
@@ -219,7 +219,7 @@ func TestRuntimeParserBuildNodeFromFunc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	testFile := filepath.Join(tmpDir, "test.go")
 	testContent := []byte(`package main
@@ -426,7 +426,7 @@ func TestRuntimeParserTypeToString(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	testFile := filepath.Join(tmpDir, "types.go")
 	testContent := []byte(`package main
@@ -496,7 +496,7 @@ func TestRuntimeParserSkipsTestFiles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	// Create go.mod
 	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module test\ngo 1.21\n"), 0644); err != nil {
@@ -525,7 +525,7 @@ func TestRuntimeParserExtractsDescription(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
-	defer os.RemoveAll(tmpDir)
+	defer func() { _ = os.RemoveAll(tmpDir) }()
 
 	testFile := filepath.Join(tmpDir, "test.go")
 	testContent := []byte(`package main

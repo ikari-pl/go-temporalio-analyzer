@@ -350,11 +350,7 @@ func (e *callExtractor) isBoringCall(receiver, method string) bool {
 		"encoding": true, "crypto": true, "hash": true,
 		"ast": true, "token": true, "parser": true, "printer": true,
 	}
-	if boringReceivers[receiver] {
-		return true
-	}
-
-	return false
+	return boringReceivers[receiver]
 }
 
 // analyzeWorkflowCall analyzes workflow.* calls.

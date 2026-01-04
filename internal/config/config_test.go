@@ -344,7 +344,7 @@ func TestValidateRootDirAbsolutePath(t *testing.T) {
 	if err := os.Chdir(tmpDir); err != nil {
 		t.Fatalf("Failed to chdir: %v", err)
 	}
-	defer os.Chdir(oldWd)
+	defer func() { _ = os.Chdir(oldWd) }()
 
 	cfg := NewConfig()
 	cfg.RootDir = "subdir"

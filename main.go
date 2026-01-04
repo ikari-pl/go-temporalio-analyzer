@@ -314,7 +314,7 @@ func runLint(cfg *config.Config, logger *slog.Logger, analyzerInstance analyzer.
 			fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
 			return 2
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		out = f
 	}
 
