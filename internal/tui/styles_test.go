@@ -39,19 +39,24 @@ func TestStyleManagerFooter(t *testing.T) {
 	sm := NewStyleManager()
 
 	tests := []struct {
-		name  string
-		input string
+		name        string
+		input       string
+		mustContain []string
 	}{
-		{"simple text", "Press q to quit"},
-		{"with key binding", "[q]Quit [?]Help"},
-		{"empty", ""},
+		{"simple text", "Press q to quit", []string{"Press", "q", "to", "quit"}},
+		{"with key binding", "[q]Quit [?]Help", []string{"q", "Quit", "?", "Help"}},
+		{"empty", "", nil},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			footer := sm.Footer(tt.input)
-			// Should not panic and should return something (possibly styled empty)
-			_ = footer
+
+			for _, content := range tt.mustContain {
+				if !strings.Contains(footer, content) {
+					t.Errorf("Footer output should contain %q, but it was %q", content, footer)
+				}
+			}
 		})
 	}
 }
@@ -63,6 +68,9 @@ func TestStyleManagerHighlight(t *testing.T) {
 	if result == "" {
 		t.Error("Highlight returned empty string")
 	}
+	if !strings.Contains(result, "highlighted text") {
+		t.Error("Highlight should contain the text")
+	}
 }
 
 func TestStyleManagerPath(t *testing.T) {
@@ -71,6 +79,9 @@ func TestStyleManagerPath(t *testing.T) {
 	result := sm.Path("Main > Sub > Item")
 	if result == "" {
 		t.Error("Path returned empty string")
+	}
+	if !strings.Contains(result, "Main > Sub > Item") {
+		t.Error("Path should contain the text")
 	}
 }
 
@@ -107,6 +118,9 @@ func TestStyleManagerSelectedItem(t *testing.T) {
 	if result == "" {
 		t.Error("SelectedItem returned empty string")
 	}
+	if !strings.Contains(result, "Selected") {
+		t.Error("SelectedItem should contain the text")
+	}
 }
 
 func TestStyleManagerDimText(t *testing.T) {
@@ -128,6 +142,9 @@ func TestStyleManagerBox(t *testing.T) {
 	result := sm.Box("Box content")
 	if result == "" {
 		t.Error("Box returned empty string")
+	}
+	if !strings.Contains(result, "Box content") {
+		t.Error("Box should contain the text")
 	}
 }
 
