@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
+
 	"github.com/ikari-pl/go-temporalio-analyzer/internal/analyzer"
 	"github.com/ikari-pl/go-temporalio-analyzer/internal/config"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/lint"
 	"github.com/ikari-pl/go-temporalio-analyzer/internal/output"
 	"github.com/ikari-pl/go-temporalio-analyzer/internal/tui"
 
@@ -23,11 +26,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Handle --lint-rules: list available rules and exit
+	if cfg.LintListRules {
+		listLintRules()
+		return
+	}
+
 	// Create logger
 	logger := NewLogger(cfg)
 
 	// Create analyzer
 	analyzerInstance := analyzer.NewAnalyzer(logger)
+
+	// Handle lint mode separately
+	if cfg.LintMode {
+		exitCode := runLint(cfg, logger, analyzerInstance)
+		os.Exit(exitCode)
+	}
 
 	// Create TUI (only needed for tui format)
 	var tuiApp tui.TUI
@@ -175,12 +190,12 @@ func renderDebugView(cfg *config.Config, graph *analyzer.TemporalGraph) error {
 	listModel.Title = "Temporal Workflows & Activities"
 
 	state := &tui.State{
-		Graph:          graph,
-		AllItems:       allItems,
-		List:           listModel,
-		CurrentView:    cfg.DebugView,
-		WindowWidth:    80,
-		WindowHeight:   24,
+		Graph:        graph,
+		AllItems:     allItems,
+		List:         listModel,
+		CurrentView:  cfg.DebugView,
+		WindowWidth:  80,
+		WindowHeight: 24,
 		ListState: &tui.ListViewState{
 			Items: initialItems,
 		},
@@ -222,4 +237,154 @@ func renderDebugView(cfg *config.Config, graph *analyzer.TemporalGraph) error {
 	// Render the view
 	fmt.Println(view.Render(state))
 	return nil
+}
+
+// runLint executes the linter and returns the exit code.
+func runLint(cfg *config.Config, logger *slog.Logger, analyzerInstance analyzer.Analyzer) int {
+	logger.Info("Starting temporal analyzer in lint mode",
+		"root_dir", cfg.RootDir,
+		"format", cfg.LintFormat,
+		"strict", cfg.LintStrict)
+
+	// Create analysis options
+	opts := cfg.ToAnalysisOptions()
+
+	// Perform analysis
+	ctx := context.Background()
+	graph, err := analyzerInstance.Analyze(ctx, opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error analyzing workflows: %v\n", err)
+		return 2 // Analysis error
+	}
+	if graph == nil {
+		fmt.Fprintf(os.Stderr, "Error: analyzer returned nil graph\n")
+		return 2 // Analysis error
+	}
+
+	logger.Info("Analysis completed",
+		"workflows", graph.Stats.TotalWorkflows,
+		"activities", graph.Stats.TotalActivities,
+		"total_nodes", len(graph.Nodes))
+
+	// Create linter config from CLI options
+	lintCfg := &lint.Config{
+		MinSeverity:   severityFromString(cfg.LintMinSeverity),
+		EnabledRules:  cfg.GetLintEnabledRules(),
+		DisabledRules: cfg.GetLintDisabledRules(),
+		FailOnWarning: cfg.LintStrict,
+		Thresholds: lint.Thresholds{
+			MaxFanOut:          cfg.LintMaxFanOut,
+			MaxCallDepth:       cfg.LintMaxCallDepth,
+			VersioningRequired: 5,
+		},
+	}
+
+	// Create linter and run
+	linter := lint.NewLinter(lintCfg)
+	result := linter.Run(ctx, graph)
+
+	// Format and output results
+	formatter := lint.NewFormatter(cfg.LintFormat)
+
+	// Determine output destination
+	out := os.Stdout
+	if cfg.OutputFile != "" {
+		f, err := os.Create(cfg.OutputFile)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
+			return 2
+		}
+		defer f.Close()
+		out = f
+	}
+
+	if err := formatter.Format(result, out); err != nil {
+		fmt.Fprintf(os.Stderr, "Error formatting results: %v\n", err)
+		return 2
+	}
+
+	return result.ExitCode
+}
+
+// listLintRules prints all available lint rules.
+func listLintRules() {
+	linter := lint.NewLinter(lint.DefaultConfig())
+	rules := linter.ListRules()
+
+	fmt.Println("\nTemporal Analyzer - Available Lint Rules")
+	fmt.Println("═══════════════════════════════════════════════════════════════════")
+	fmt.Println()
+
+	// Group by category
+	categories := make(map[lint.Category][]lint.RuleInfo)
+	for _, rule := range rules {
+		categories[rule.Category] = append(categories[rule.Category], rule)
+	}
+
+	categoryOrder := []lint.Category{
+		lint.CategoryReliability,
+		lint.CategoryBestPractice,
+		lint.CategoryPerformance,
+		lint.CategoryMaintenance,
+		lint.CategorySecurity,
+	}
+
+	for _, cat := range categoryOrder {
+		catRules, ok := categories[cat]
+		if !ok || len(catRules) == 0 {
+			continue
+		}
+
+		fmt.Printf("  %s\n", categoryTitle(cat))
+		fmt.Println("  " + strings.Repeat("─", 60))
+		for _, rule := range catRules {
+			severityIcon := "ℹ"
+			switch rule.Severity {
+			case lint.SeverityError:
+				severityIcon = "✖"
+			case lint.SeverityWarning:
+				severityIcon = "⚠"
+			}
+			fmt.Printf("    %s %-8s %-30s %s\n", severityIcon, rule.ID, rule.Name, rule.Severity)
+			fmt.Printf("              %s\n", rule.Description)
+			fmt.Println()
+		}
+	}
+
+	fmt.Println("Usage:")
+	fmt.Println("  temporal-analyzer --lint                    # Run all rules")
+	fmt.Println("  temporal-analyzer --lint --lint-strict      # Fail on warnings")
+	fmt.Println("  temporal-analyzer --lint --lint-disable TA001,TA002")
+	fmt.Println("  temporal-analyzer --lint --lint-format github  # For GitHub Actions")
+	fmt.Println()
+}
+
+func categoryTitle(cat lint.Category) string {
+	switch cat {
+	case lint.CategoryReliability:
+		return "🔒 Reliability"
+	case lint.CategoryBestPractice:
+		return "✨ Best Practices"
+	case lint.CategoryPerformance:
+		return "⚡ Performance"
+	case lint.CategoryMaintenance:
+		return "🔧 Maintenance"
+	case lint.CategorySecurity:
+		return "🛡️  Security"
+	default:
+		return string(cat)
+	}
+}
+
+func severityFromString(s string) lint.Severity {
+	switch s {
+	case "error":
+		return lint.SeverityError
+	case "warning":
+		return lint.SeverityWarning
+	case "info":
+		return lint.SeverityInfo
+	default:
+		return lint.SeverityInfo
+	}
 }

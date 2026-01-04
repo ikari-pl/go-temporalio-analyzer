@@ -109,3 +109,30 @@ globs: *
 *   In the tree view, show internal calls (non-Temporal function calls) within Activities.
 *   In the tree view, provide options to group the workflow by package or call hierarchy.
 *   In the tree view, "by package" should use FQNs (grouping by common parent), otherwise it's too many.
+
+## CI/CD INTEGRATION
+*   Implement a "lint" mode to use the analyzer in CI/CD pipelines. This mode should run non-interactively and report issues/violations in a CI-friendly format that could fail a CI build.
+*   **Lint Mode** - Non-interactive analysis with exit codes for CI
+*   **Multiple Formats** - Text, JSON, GitHub Actions, SARIF, Checkstyle
+*   **Configurable Rules** - Enable/disable specific checks
+*   **Strict Mode** - Fail on warnings for strict pipelines
+*   **Code Fix Suggestions** - Include code fix suggestions in JSON and SARIF output formats. These can be used by:
+    *   **GitHub Code Scanning** - SARIF format includes fixes that GitHub can display
+    *   **IDE integrations** - JSON output includes fix suggestions for editor plugins
+    *   **Custom tooling** - Parse the JSON/SARIF output to apply fixes programmatically
+
+## LINT RULES
+*   Every rule description should describe the real value—explain why we are checking these things in the first place.
+
+## RULE DESCRIPTIONS
+*   **ActivityWithoutRetryRule (TA001)**: Network blips, service restarts, and temporary unavailability are common. Without retry policies, every transient error becomes a workflow failure requiring manual intervention.
+*   **ActivityWithoutTimeoutRule (TA002)**: Activities can hang forever due to deadlocked connections, infinite loops, or unresponsive dependencies. Without timeouts, workflows get stuck permanently, consuming resources and blocking business processes.
+*   **LongRunningActivityWithoutHeartbeatRule (TA003)**: Long-running activities should have heartbeats. Without them, if a worker dies (OOMKill, scale-down, SIGKILL), Temporal must wait for the full timeout before retrying. Heartbeats enable fast failure detection.
+*   **CircularDependencyRule (TA010)**: Workflow A waiting for B while B waits for A creates a deadlock that never resolves. These are hard to debug in production, waste resources, and can cascade into system-wide issues.
+*   **OrphanNodeRule (TA011)**: Unused workflows/activities add maintenance burden, confuse developers, and may indicate incomplete migrations or forgotten features. Dead code should be removed to keep the codebase clean.
+*   **HighFanOutRule (TA020)**: High fan-out creates blast radius issues: one change affects many dependencies. It makes testing harder, increases coupling, and often indicates a missing abstraction layer or orchestration pattern.
+*   **DeepCallChainRule (TA021)**: Deep call chains make stack traces hard to read, increase end-to-end latency, and make it difficult to understand the business flow. Consider flattening or using child workflows for clarity.
+*   **WorkflowWithoutVersioningRule (TA030)**: Long-running workflows may execute for days or weeks. Without versioning, deploying logic changes can break in-flight executions mid-run, causing failures and data inconsistencies.
+*   **SignalWithoutHandlerRule (TA031)**: Unhandled signals are silently dropped. External systems sending signals believe they're communicating with the workflow, but the data goes nowhere—a silent failure that's hard to debug.
+*   **QueryWithoutReturnRule (TA032)**: Highlight that queries serve as critical diagnostic and monitoring tools. Returning empty results undermines system transparency and makes troubleshooting nearly impossible for external systems.
+*   **ContinueAsNewWithoutConditionRule (TA033)**: Demonstrate that unchecked continue-as-new workflows can become infinite resource sinks, consuming computational resources and generating escalating costs without delivering value.

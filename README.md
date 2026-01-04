@@ -6,6 +6,9 @@ A **beautiful**, **production-ready** CLI/TUI tool for analyzing and visualizing
 ![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go)
 ![Temporal](https://img.shields.io/badge/Temporal-SDK-FF6B6B?style=for-the-badge)
 
+If you find this tool useful, please consider buying me a coffee!
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/A0A4GUGRG)
+
 ## ✨ Features
 
 ### 🔍 Complete Temporal SDK Analysis
@@ -38,6 +41,12 @@ A **beautiful**, **production-ready** CLI/TUI tool for analyzing and visualizing
 - **DOT** - Graphviz format for visual diagrams
 - **Mermaid** - Embed diagrams in Markdown
 - **Markdown** - Documentation-ready format
+
+### 🔧 CI/CD Lint Mode
+- **Lint Mode** - Non-interactive analysis with exit codes for CI
+- **Multiple Formats** - Text, JSON, GitHub Actions, SARIF, Checkstyle
+- **Configurable Rules** - Enable/disable specific checks
+- **Strict Mode** - Fail on warnings for strict pipelines
 
 ## 📦 Installation
 
@@ -91,6 +100,106 @@ dot -Tpng temporal.dot -o temporal-graph.png
 
 # Preview help screen
 ./temporal-analyzer -debug-view=help
+```
+
+### 🔧 Lint Mode (CI/CD Integration)
+
+The lint mode provides non-interactive analysis with proper exit codes for CI/CD pipelines:
+
+```bash
+# Run lint analysis (exit code 0 if no errors, 1 otherwise)
+./temporal-analyzer --lint
+
+# Strict mode - treat warnings as errors
+./temporal-analyzer --lint --lint-strict
+
+# List all available lint rules
+./temporal-analyzer --lint-rules
+
+# Output in different formats
+./temporal-analyzer --lint --lint-format=text      # Human-readable (default)
+./temporal-analyzer --lint --lint-format=json      # Machine-parseable JSON
+./temporal-analyzer --lint --lint-format=github    # GitHub Actions annotations
+./temporal-analyzer --lint --lint-format=sarif     # SARIF format (GitHub Code Scanning)
+./temporal-analyzer --lint --lint-format=checkstyle # Checkstyle XML
+
+# Disable specific rules
+./temporal-analyzer --lint --lint-disable=TA001,TA002
+
+# Only run specific rules
+./temporal-analyzer --lint --lint-enable=TA010,TA020
+
+# Set minimum severity level
+./temporal-analyzer --lint --lint-level=warning   # error, warning, info
+
+# Configure thresholds
+./temporal-analyzer --lint --lint-max-fan-out=20 --lint-max-depth=15
+
+# Output to file
+./temporal-analyzer --lint --lint-format=sarif --output=results.sarif
+```
+
+#### GitHub Actions Example
+
+```yaml
+name: Temporal Workflow Analysis
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      
+      - name: Install Temporal Analyzer
+        run: go install github.com/ikari-pl/go-temporalio-analyzer@latest
+      
+      - name: Run Lint
+        run: temporal-analyzer --lint --lint-format=github --lint-strict
+```
+
+#### Available Lint Rules
+
+| ID | Name | Severity | Description | Fix |
+|----|------|----------|-------------|-----|
+| TA001 | activity-without-retry | warning | Transient failures (network, restarts) become permanent failures without retries | ✅ |
+| TA002 | activity-without-timeout | error | Hung activities block workflows forever, wasting resources | ✅ |
+| TA003 | long-activity-without-heartbeat | warning | Worker crashes (OOMKill, scale-down) cause slow retries without heartbeats | ✅ |
+| TA010 | circular-dependency | error | A↔B deadlocks never resolve and cascade into system-wide issues | |
+| TA011 | orphan-node | warning | Dead code adds maintenance burden and confuses developers | |
+| TA020 | high-fan-out | warning | High coupling increases blast radius and indicates missing abstractions | |
+| TA021 | deep-call-chain | warning | Deep chains hurt debugging, latency, and comprehension | |
+| TA030 | workflow-without-versioning | info | Deploying changes can break long-running workflows mid-execution | 📝 |
+| TA031 | signal-without-handler | warning | Unhandled signals are silently dropped—a hidden failure mode | |
+| TA032 | query-without-return | info | Queries that return nothing defeat their inspection purpose | |
+| TA033 | continue-as-new-risk | info | Without termination conditions, workflows run forever | |
+
+✅ = insertable code fix, 📝 = code template
+
+#### Code Fix Suggestions
+
+Rules marked with ✅ include insertable code fixes in JSON and SARIF output. Rules marked with 📝 provide code templates. These can be used by:
+- **GitHub Code Scanning** - SARIF format includes fixes that GitHub can display
+- **IDE integrations** - JSON output includes fix suggestions for editor plugins  
+- **Custom tooling** - Parse the JSON/SARIF output to apply fixes programmatically
+
+Example fix in JSON output:
+```json
+{
+  "fix": {
+    "description": "Add retry policy to activity options",
+    "replacements": [{
+      "filePath": "workflow.go",
+      "startLine": 42,
+      "newText": "ao := workflow.ActivityOptions{\n\tStartToCloseTimeout: 10 * time.Minute,\n\tRetryPolicy: &temporal.RetryPolicy{\n\t\tMaximumAttempts: 3,\n\t},\n}\nctx = workflow.WithActivityOptions(ctx, ao)"
+    }]
+  }
+}
 ```
 
 ### Advanced Options
@@ -232,6 +341,10 @@ internal/
 │   ├── types.go     # Data structures
 │   └── service.go   # Business logic
 ├── config/          # Configuration management
+├── lint/            # CI/CD lint mode
+│   ├── linter.go    # Lint orchestrator
+│   ├── rules.go     # Lint rule definitions
+│   └── formatters.go # Output formatters (JSON, GitHub, SARIF, etc.)
 ├── output/          # Export formatters
 │   ├── json.go      # JSON export
 │   └── exporter.go  # DOT, Mermaid, Markdown

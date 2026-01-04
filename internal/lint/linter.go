@@ -1,0 +1,252 @@
+package lint
+
+import (
+	"context"
+	"sort"
+
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/analyzer"
+)
+
+// Config holds linter configuration.
+type Config struct {
+	// MinSeverity is the minimum severity level to report
+	MinSeverity Severity
+	// EnabledRules contains the IDs of rules to enable (empty means all)
+	EnabledRules []string
+	// DisabledRules contains the IDs of rules to disable
+	DisabledRules []string
+	// FailOnWarning treats warnings as failures for CI
+	FailOnWarning bool
+	// MaxIssues is the maximum number of issues to report (0 = unlimited)
+	MaxIssues int
+	// CustomThresholds allows overriding default rule thresholds
+	Thresholds Thresholds
+}
+
+// Thresholds contains configurable thresholds for various rules.
+type Thresholds struct {
+	MaxFanOut          int `json:"maxFanOut"`
+	MaxCallDepth       int `json:"maxCallDepth"`
+	VersioningRequired int `json:"versioningRequired"` // Activities count to require versioning
+}
+
+// DefaultConfig returns a default linter configuration.
+func DefaultConfig() *Config {
+	return &Config{
+		MinSeverity:   SeverityInfo,
+		EnabledRules:  nil, // All rules enabled
+		DisabledRules: nil,
+		FailOnWarning: false,
+		MaxIssues:     0, // Unlimited
+		Thresholds: Thresholds{
+			MaxFanOut:          15,
+			MaxCallDepth:       10,
+			VersioningRequired: 5,
+		},
+	}
+}
+
+// StrictConfig returns a strict configuration for CI.
+func StrictConfig() *Config {
+	cfg := DefaultConfig()
+	cfg.FailOnWarning = true
+	cfg.MinSeverity = SeverityWarning
+	return cfg
+}
+
+// Result holds the results of a lint run.
+type Result struct {
+	Issues     []Issue `json:"issues"`
+	ErrorCount int     `json:"errorCount"`
+	WarnCount  int     `json:"warningCount"`
+	InfoCount  int     `json:"infoCount"`
+	TotalNodes int     `json:"totalNodes"`
+	ExitCode   int     `json:"exitCode"`
+}
+
+// Passed returns true if the lint run passed (no errors, and no warnings if strict).
+func (r *Result) Passed(strict bool) bool {
+	if r.ErrorCount > 0 {
+		return false
+	}
+	if strict && r.WarnCount > 0 {
+		return false
+	}
+	return true
+}
+
+// Summary returns a summary string of the results.
+func (r *Result) Summary() string {
+	if r.ErrorCount == 0 && r.WarnCount == 0 && r.InfoCount == 0 {
+		return "No issues found"
+	}
+	return ""
+}
+
+// Linter orchestrates lint rule execution.
+type Linter struct {
+	config *Config
+	rules  []Rule
+}
+
+// NewLinter creates a new linter with the given configuration.
+func NewLinter(cfg *Config) *Linter {
+	if cfg == nil {
+		cfg = DefaultConfig()
+	}
+
+	l := &Linter{
+		config: cfg,
+		rules:  make([]Rule, 0),
+	}
+
+	// Register all rules
+	l.registerRules()
+
+	return l
+}
+
+// registerRules registers all available lint rules.
+func (l *Linter) registerRules() {
+	// Best Practice Rules
+	l.rules = append(l.rules, &ActivityWithoutRetryRule{})
+	l.rules = append(l.rules, &ActivityWithoutTimeoutRule{})
+	l.rules = append(l.rules, &LongRunningActivityWithoutHeartbeatRule{})
+
+	// Reliability Rules
+	l.rules = append(l.rules, &CircularDependencyRule{})
+	l.rules = append(l.rules, &OrphanNodeRule{})
+	l.rules = append(l.rules, &SignalWithoutHandlerRule{})
+
+	// Performance Rules
+	l.rules = append(l.rules, NewHighFanOutRule(l.config.Thresholds.MaxFanOut))
+	l.rules = append(l.rules, NewDeepCallChainRule(l.config.Thresholds.MaxCallDepth))
+
+	// Maintenance Rules
+	l.rules = append(l.rules, NewWorkflowWithoutVersioningRule(l.config.Thresholds.VersioningRequired))
+	l.rules = append(l.rules, &QueryWithoutReturnRule{})
+	l.rules = append(l.rules, &ContinueAsNewWithoutConditionRule{})
+}
+
+// isRuleEnabled checks if a rule should be executed.
+func (l *Linter) isRuleEnabled(ruleID string) bool {
+	// Check if explicitly disabled
+	for _, disabled := range l.config.DisabledRules {
+		if disabled == ruleID {
+			return false
+		}
+	}
+
+	// If specific rules are enabled, check if this one is in the list
+	if len(l.config.EnabledRules) > 0 {
+		for _, enabled := range l.config.EnabledRules {
+			if enabled == ruleID {
+				return true
+			}
+		}
+		return false
+	}
+
+	return true
+}
+
+// shouldReport checks if an issue meets the minimum severity threshold.
+func (l *Linter) shouldReport(issue Issue) bool {
+	return issue.Severity.Level() >= l.config.MinSeverity.Level()
+}
+
+// Run executes all enabled lint rules against the graph.
+func (l *Linter) Run(ctx context.Context, graph *analyzer.TemporalGraph) *Result {
+	result := &Result{
+		Issues:     make([]Issue, 0),
+		TotalNodes: len(graph.Nodes),
+	}
+
+	// Execute each enabled rule
+	for _, rule := range l.rules {
+		select {
+		case <-ctx.Done():
+			return result
+		default:
+		}
+
+		if !l.isRuleEnabled(rule.ID()) {
+			continue
+		}
+
+		issues := rule.Check(ctx, graph)
+		for _, issue := range issues {
+			if !l.shouldReport(issue) {
+				continue
+			}
+
+			result.Issues = append(result.Issues, issue)
+
+			// Count by severity
+			switch issue.Severity {
+			case SeverityError:
+				result.ErrorCount++
+			case SeverityWarning:
+				result.WarnCount++
+			case SeverityInfo:
+				result.InfoCount++
+			}
+
+			// Check max issues limit
+			if l.config.MaxIssues > 0 && len(result.Issues) >= l.config.MaxIssues {
+				break
+			}
+		}
+
+		if l.config.MaxIssues > 0 && len(result.Issues) >= l.config.MaxIssues {
+			break
+		}
+	}
+
+	// Sort issues by severity (most severe first), then by file/line
+	sort.Slice(result.Issues, func(i, j int) bool {
+		if result.Issues[i].Severity.Level() != result.Issues[j].Severity.Level() {
+			return result.Issues[i].Severity.Level() > result.Issues[j].Severity.Level()
+		}
+		if result.Issues[i].FilePath != result.Issues[j].FilePath {
+			return result.Issues[i].FilePath < result.Issues[j].FilePath
+		}
+		return result.Issues[i].LineNumber < result.Issues[j].LineNumber
+	})
+
+	// Determine exit code
+	if result.ErrorCount > 0 {
+		result.ExitCode = 1
+	} else if l.config.FailOnWarning && result.WarnCount > 0 {
+		result.ExitCode = 1
+	}
+
+	return result
+}
+
+// ListRules returns all available rules.
+func (l *Linter) ListRules() []RuleInfo {
+	info := make([]RuleInfo, 0, len(l.rules))
+	for _, rule := range l.rules {
+		info = append(info, RuleInfo{
+			ID:          rule.ID(),
+			Name:        rule.Name(),
+			Category:    rule.Category(),
+			Severity:    rule.Severity(),
+			Description: rule.Description(),
+			Enabled:     l.isRuleEnabled(rule.ID()),
+		})
+	}
+	return info
+}
+
+// RuleInfo provides information about a lint rule.
+type RuleInfo struct {
+	ID          string   `json:"id"`
+	Name        string   `json:"name"`
+	Category    Category `json:"category"`
+	Severity    Severity `json:"severity"`
+	Description string   `json:"description"`
+	Enabled     bool     `json:"enabled"`
+}
+
