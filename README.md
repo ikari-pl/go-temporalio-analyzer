@@ -1,27 +1,52 @@
 # Temporal Analyzer
 
-A beautiful CLI/TUI tool for analyzing and visualizing Temporal.io workflow and activity connections in Go codebases.
+A **beautiful**, **production-ready** CLI/TUI tool for analyzing and visualizing Temporal.io workflow and activity connections in Go codebases.
 
-## Features
+![Demo](https://img.shields.io/badge/TUI-Beautiful-blueviolet?style=for-the-badge)
+![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?style=for-the-badge&logo=go)
+![Temporal](https://img.shields.io/badge/Temporal-SDK-FF6B6B?style=for-the-badge)
 
-- 🔍 **Automatic Discovery**: Scans your codebase to find all Temporal workflows and activities
-- 🌳 **Relationship Mapping**: Maps the connections between workflows and activities
-- 📊 **Multiple Output Formats**: Tree view, JSON, DOT (Graphviz), and Markdown
-- 🎨 **Interactive TUI**: Beautiful terminal user interface for navigation
-- 📈 **Statistics**: Provides insights about your temporal graph
-- 🔎 **Search & Filter**: Find specific workflows or activities quickly
+## ✨ Features
 
-## Installation
+### 🔍 Complete Temporal SDK Analysis
+- **Workflows** - Detect and analyze all Temporal workflows
+- **Activities** - Find activities and their callers
+- **Signals** - Discover signal handlers and signal channels
+- **Queries** - Identify query handlers
+- **Updates** - Find update handlers (Temporal SDK 1.20+)
+- **Timers** - Track `workflow.Sleep` and `workflow.NewTimer` calls
+- **Versioning** - Detect `workflow.GetVersion` usage
+- **Search Attributes** - Find `UpsertSearchAttributes` calls
+- **Continue-as-New** - Identify workflow continuation patterns
 
-From the ff repository root:
+### 🎨 Beautiful Terminal UI
+- **Modern Design** - Inspired by popular terminal aesthetics
+- **Gradient Headers** - Eye-catching visual hierarchy
+- **Color-coded Types** - Instantly identify node types
+- **Rounded Borders** - Polished, professional look
+- **Responsive Layout** - Adapts to terminal size
+
+### 📊 Multiple Views
+- **List View** - Browse all workflows and activities
+- **Tree View** - Visualize call hierarchy with expandable nodes
+- **Details View** - Deep-dive into node connections
+- **Stats Dashboard** - At-a-glance metrics
+- **Help Overlay** - In-app keyboard reference
+
+### 🚀 Export Formats
+- **JSON** - Machine-readable full graph export
+- **DOT** - Graphviz format for visual diagrams
+- **Mermaid** - Embed diagrams in Markdown
+- **Markdown** - Documentation-ready format
+
+## 📦 Installation
 
 ```bash
 cd cmd/temporal-analyzer
-go mod tidy
 go build -o temporal-analyzer
 ```
 
-## Usage
+## 🎯 Usage
 
 ### Interactive TUI Mode (Default)
 
@@ -29,164 +54,202 @@ go build -o temporal-analyzer
 ./temporal-analyzer
 ```
 
-This opens an interactive terminal interface where you can:
-- Browse all workflows and activities
-- Search by name (press `/`)
-- View detailed information (press `Enter` on a selected item)
-- Toggle details view (press `d`)
+Opens a beautiful terminal interface where you can:
+- Browse workflows, activities, signals, and queries
+- Navigate the call hierarchy in tree view
+- View detailed node information
+- Search and filter by name
 
-### CLI Mode
+### CLI Export Modes
 
 ```bash
-# Generate tree output
-./temporal-analyzer -interactive=false
-
 # Export to JSON
-./temporal-analyzer -interactive=false -format=json -output=temporal-graph.json
+./temporal-analyzer -format=json > graph.json
 
 # Generate Graphviz DOT file
-./temporal-analyzer -interactive=false -format=dot -output=temporal-graph.dot
+./temporal-analyzer -format=dot > temporal.dot
+dot -Tpng temporal.dot -o temporal-graph.png
+
+# Generate Mermaid diagram
+./temporal-analyzer -format=mermaid > diagram.md
 
 # Generate Markdown documentation
-./temporal-analyzer -interactive=false -format=markdown -output=temporal-docs.md
+./temporal-analyzer -format=markdown > TEMPORAL.md
+```
 
-# Filter by type
-./temporal-analyzer -interactive=false -filter-type=workflow
+### Debug View Modes (No Interaction)
 
-# Filter by name pattern (regex)
-./temporal-analyzer -interactive=false -filter-name=".*Employee.*"
+```bash
+# Preview list view
+./temporal-analyzer -debug-view=list
 
-# Show detailed information
-./temporal-analyzer -interactive=false -details
+# Preview tree view
+./temporal-analyzer -debug-view=tree
 
+# Preview stats dashboard
+./temporal-analyzer -debug-view=stats
+
+# Preview help screen
+./temporal-analyzer -debug-view=help
+```
+
+### Advanced Options
+
+```bash
 # Analyze specific directory
-./temporal-analyzer -interactive=false -root=./pkg/temporal/workflows
+./temporal-analyzer -root=./pkg/workflows
+
+# Include test files
+./temporal-analyzer -include-tests
+
+# Filter by package name (regex)
+./temporal-analyzer -package=".*workflow.*"
+
+# Filter by function name (regex)
+./temporal-analyzer -name=".*Employee.*"
+
+# Verbose logging
+./temporal-analyzer -verbose
+
+# Debug mode
+./temporal-analyzer -debug
 ```
 
-## Output Formats
+## ⌨️ Keyboard Shortcuts
 
-### Tree Format (Default)
-```
-Temporal Workflow/Activity Analysis
-====================================
+### Navigation
+| Key | Action |
+|-----|--------|
+| `j` / `↓` | Move down |
+| `k` / `↑` | Move up |
+| `Enter` | Select / Open details |
+| `Esc` / `q` | Go back / Quit |
+| `g` | Go to top |
+| `G` | Go to bottom |
 
-Statistics:
-- Total Workflows: 45
-- Total Activities: 78
-- Max Depth: 5
-- Orphan Nodes: 3
+### Views
+| Key | Action |
+|-----|--------|
+| `1` | List view |
+| `2` | Tree view |
+| `3` | Stats dashboard |
+| `t` | Toggle tree view |
+| `?` | Help |
 
-Workflow Tree:
---------------
-EmployeeFilingsProcessingWorkflow [workflow]
-├── GetClientReconStatus [activity]
-├── GenerateEmployeeFilingData [activity]
-├── RunDataAudits [activity]
-└── CreateDocGenWorkflow [workflow]
-    ├── GenerateDocuments [workflow]
-    └── EmployeeFilingsDocGenerationActivity [activity]
-```
+### Filtering
+| Key | Action |
+|-----|--------|
+| `/` | Search / Filter |
+| `w` | Toggle workflows |
+| `a` | Toggle activities |
+| `s` | Toggle signals |
+| `C` | Clear all filters |
 
-### JSON Format
-Complete machine-readable representation of the temporal graph with all metadata.
+### Tree View
+| Key | Action |
+|-----|--------|
+| `h` / `←` | Collapse node |
+| `l` / `→` | Expand node |
+| `e` | Expand all |
+| `c` | Collapse all |
 
-### DOT Format
-Generate Graphviz diagrams:
-```bash
-./temporal-analyzer -format=dot -output=graph.dot
-dot -Tpng graph.dot -o temporal-graph.png
-```
+### Details View
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Navigate items |
+| `Enter` | Go to selected |
 
-### Markdown Format
-Documentation-ready format with statistics, workflow descriptions, and call relationships.
+## 🎨 Theme
 
-## How It Works
+The analyzer uses a beautiful dark theme inspired by modern terminal aesthetics:
 
-The analyzer:
+- **Base**: Deep space dark (`#0d1117`)
+- **Workflows**: Purple (`#a371f7`)
+- **Activities**: Green (`#7ee787`)
+- **Signals**: Orange (`#ffa657`)
+- **Queries**: Blue (`#79c0ff`)
+- **Updates**: Red (`#ff7b72`)
 
-1. **Scans Go Files**: Recursively searches for `.go` files in workflow/activity related packages
-2. **Parses AST**: Uses Go's AST parser to analyze function signatures and calls
-3. **Identifies Patterns**: Recognizes Temporal workflows and activities by:
-   - Function names ending in "Workflow" or "Activity"
-   - Functions with `workflow.Context` or `context.Context` as first parameter
-4. **Extracts Calls**: Finds `workflow.ExecuteActivity` and `workflow.ExecuteChildWorkflow` calls
-5. **Builds Graph**: Creates a directed graph of all relationships
-6. **Generates Output**: Provides multiple visualization and export options
+## 📈 Statistics
 
-## TUI Navigation
+The stats dashboard shows:
 
-- **Arrow Keys / j,k**: Navigate list
-- **Enter**: View details of selected item
-- **/**: Search mode
-- **d**: Toggle details in list view
-- **Esc**: Go back / exit search
-- **q / Ctrl+C**: Quit
+| Metric | Description |
+|--------|-------------|
+| **Workflows** | Total Temporal workflows |
+| **Activities** | Total Temporal activities |
+| **Signals** | Signal handlers and channels |
+| **Queries** | Query handlers |
+| **Max Depth** | Deepest call chain |
+| **Orphans** | Disconnected nodes |
+| **Fan-Out** | Average connections per node |
 
-## Examples
-
-### Find All Document Generation Workflows
-```bash
-./temporal-analyzer -filter-name=".*[Dd]ocument.*" -details
-```
-
-### Export Employee Filing Workflows
-```bash
-./temporal-analyzer -filter-name=".*Employee.*" -format=json -output=employee-workflows.json
-```
-
-### Generate Visual Graph
-```bash
-./temporal-analyzer -format=dot -output=temporal.dot
-dot -Tpng temporal.dot -o temporal-graph.png
-```
-
-## Statistics Explained
-
-- **Total Workflows**: Number of functions identified as Temporal workflows
-- **Total Activities**: Number of functions identified as Temporal activities  
-- **Max Depth**: Maximum call chain depth in the workflow graph
-- **Orphan Nodes**: Workflows/activities with no parents or children (potential issues)
-
-## Supported Patterns
+## 🔬 Detection Patterns
 
 The analyzer recognizes these Temporal patterns:
 
 ```go
-// Workflows
-func SomeWorkflow(ctx workflow.Context, param SomeParam) (SomeResponse, error)
-func (w *WorkflowStruct) AnotherWorkflow(ctx workflow.Context, param Param) error
+// Workflows (detected by name or context type)
+func SomeWorkflow(ctx workflow.Context, ...) (Result, error)
 
-// Activities  
-func SomeActivity(ctx context.Context, param SomeParam) (SomeResponse, error)
-func (a *ActivityStruct) AnotherActivity(ctx context.Context, param Param) error
+// Activities (detected by name or context type)
+func SomeActivity(ctx context.Context, ...) (Result, error)
 
-// Calls
-workflow.ExecuteActivity(ctx, activity.SomeActivity, params)
-workflow.ExecuteChildWorkflow(ctx, SomeChildWorkflow, params)
+// Signal Handlers
+workflow.SetSignalHandler(ctx, "signal-name", handler)
+workflow.GetSignalChannel(ctx, "signal-name")
+
+// Query Handlers
+workflow.SetQueryHandler(ctx, "query-name", handler)
+
+// Update Handlers (SDK 1.20+)
+workflow.SetUpdateHandler(ctx, "update-name", handler)
+
+// Timers
+workflow.Sleep(ctx, duration)
+workflow.NewTimer(ctx, duration)
+
+// Versioning
+workflow.GetVersion(ctx, "change-id", minVersion, maxVersion)
+
+// Child Workflows
+workflow.ExecuteChildWorkflow(ctx, ChildWorkflow, args)
+
+// Activities
+workflow.ExecuteActivity(ctx, SomeActivity, args)
+workflow.ExecuteLocalActivity(ctx, LocalActivity, args)
 ```
 
-## Contributing
+## 🏗️ Architecture
 
-To extend the analyzer:
+```
+internal/
+├── analyzer/        # Core analysis engine
+│   ├── analyzer.go  # Main analyzer interface
+│   ├── parser.go    # Go AST parsing
+│   ├── extractor.go # Temporal pattern extraction
+│   ├── graph.go     # Dependency graph builder
+│   ├── types.go     # Data structures
+│   └── service.go   # Business logic
+├── config/          # Configuration management
+├── output/          # Export formatters
+│   ├── json.go      # JSON export
+│   └── exporter.go  # DOT, Mermaid, Markdown
+└── tui/             # Terminal UI
+    ├── theme/       # Color theme system
+    ├── views.go     # View implementations
+    ├── tui.go       # Main TUI controller
+    ├── styles.go    # Styling system
+    └── types.go     # UI data structures
+```
 
-1. **Add New Patterns**: Modify the `isWorkflowFunction` and `isActivityFunction` functions
-2. **Improve Call Extraction**: Enhance `extractChildCalls` for complex call patterns
-3. **Add Output Formats**: Implement new generators in the `generateOutput` function
-4. **Enhance TUI**: Add new views or navigation features in the `model` struct
+## 🤝 Contributing
 
-## Troubleshooting
+1. **Add New Patterns**: Extend `parser.go` for new detection patterns
+2. **Improve UI**: Add new views in `views.go`
+3. **Add Exports**: Create new formatters in `output/`
+4. **Enhance Theme**: Modify `theme/theme.go` for styling
 
-### No Workflows Found
-- Ensure you're running from the correct directory
-- Check that your workflows follow the naming conventions
-- Use `-root` flag to specify the correct path
+## 📄 License
 
-### Missing Relationships
-- The analyzer looks for direct `workflow.ExecuteActivity` calls
-- Dynamic activity names or indirect calls may not be detected
-- Complex reflection-based patterns may require manual annotation
-
-### Performance Issues
-- Large codebases may take time to analyze
-- Use `-filter-type` or `-filter-name` to limit scope
-- Consider analyzing specific subdirectories with `-root`
+MIT
