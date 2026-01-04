@@ -350,11 +350,7 @@ func (e *callExtractor) isBoringCall(receiver, method string) bool {
 		"encoding": true, "crypto": true, "hash": true,
 		"ast": true, "token": true, "parser": true, "printer": true,
 	}
-	if boringReceivers[receiver] {
-		return true
-	}
-
-	return false
+	return boringReceivers[receiver]
 }
 
 // analyzeWorkflowCall analyzes workflow.* calls.
@@ -756,6 +752,11 @@ func (e *callExtractor) extractFunctionReference(expr ast.Expr) string {
 	case *ast.Ident:
 		return e.Name
 	case *ast.SelectorExpr:
+		// For selector expressions like handler.MethodName, include the receiver
+		// This helps distinguish between different receivers calling methods with the same name
+		if ident, ok := e.X.(*ast.Ident); ok {
+			return ident.Name + "." + e.Sel.Name
+		}
 		return e.Sel.Name
 	case *ast.FuncLit:
 		return ""

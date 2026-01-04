@@ -9,6 +9,16 @@ import (
 	"time"
 )
 
+// Helper functions to suppress errcheck warnings for formatting output.
+// These are used for writing to output streams where errors are non-fatal.
+func fprintf(w io.Writer, format string, a ...any) {
+	_, _ = fmt.Fprintf(w, format, a...)
+}
+
+func fprintln(w io.Writer, a ...any) {
+	_, _ = fmt.Fprintln(w, a...)
+}
+
 // Formatter defines the interface for output formatters.
 type Formatter interface {
 	Format(result *Result, w io.Writer) error
@@ -62,11 +72,11 @@ func (f *TextFormatter) Format(result *Result, w io.Writer) error {
 	}
 
 	// Header
-	fmt.Fprintf(w, "\n%s%sTemporal Analyzer - Lint Results%s\n", bold, blue, reset)
-	fmt.Fprintf(w, "%s══════════════════════════════════════════════════════════════════%s\n\n", dim, reset)
+	fprintf(w, "\n%s%sTemporal Analyzer - Lint Results%s\n", bold, blue, reset)
+	fprintf(w, "%s══════════════════════════════════════════════════════════════════%s\n\n", dim, reset)
 
 	if len(result.Issues) == 0 {
-		fmt.Fprintf(w, "%s✓ No issues found!%s\n\n", bold, reset)
+		fprintf(w, "%s✓ No issues found!%s\n\n", bold, reset)
 		return nil
 	}
 
@@ -83,7 +93,7 @@ func (f *TextFormatter) Format(result *Result, w io.Writer) error {
 
 	// Print file-grouped issues
 	for filePath, issues := range byFile {
-		fmt.Fprintf(w, "%s%s%s\n", bold, filePath, reset)
+		fprintf(w, "%s%s%s\n", bold, filePath, reset)
 		for _, issue := range issues {
 			severityColor := blue
 			severityIcon := "ℹ"
@@ -101,22 +111,22 @@ func (f *TextFormatter) Format(result *Result, w io.Writer) error {
 				lineInfo = fmt.Sprintf("%d:", issue.LineNumber)
 			}
 
-			fmt.Fprintf(w, "  %s%s%s %s%s%s %s%s%s %s\n",
+			fprintf(w, "  %s%s%s %s%s%s %s%s%s %s\n",
 				dim, lineInfo, reset,
 				severityColor, severityIcon, reset,
 				dim, issue.RuleID, reset,
 				issue.Message)
 
 			if issue.Suggestion != "" {
-				fmt.Fprintf(w, "     %s→ %s%s\n", dim, issue.Suggestion, reset)
+				fprintf(w, "     %s→ %s%s\n", dim, issue.Suggestion, reset)
 			}
 		}
-		fmt.Fprintln(w)
+		fprintln(w)
 	}
 
 	// Print non-file issues
 	if len(noFile) > 0 {
-		fmt.Fprintf(w, "%sGeneral Issues%s\n", bold, reset)
+		fprintf(w, "%sGeneral Issues%s\n", bold, reset)
 		for _, issue := range noFile {
 			severityColor := blue
 			severityIcon := "ℹ"
@@ -129,20 +139,20 @@ func (f *TextFormatter) Format(result *Result, w io.Writer) error {
 				severityIcon = "⚠"
 			}
 
-			fmt.Fprintf(w, "  %s%s%s %s%s%s %s\n",
+			fprintf(w, "  %s%s%s %s%s%s %s\n",
 				severityColor, severityIcon, reset,
 				dim, issue.RuleID, reset,
 				issue.Message)
 
 			if issue.Suggestion != "" {
-				fmt.Fprintf(w, "     %s→ %s%s\n", dim, issue.Suggestion, reset)
+				fprintf(w, "     %s→ %s%s\n", dim, issue.Suggestion, reset)
 			}
 		}
-		fmt.Fprintln(w)
+		fprintln(w)
 	}
 
 	// Summary
-	fmt.Fprintf(w, "%s──────────────────────────────────────────────────────────────────%s\n", dim, reset)
+	fprintf(w, "%s──────────────────────────────────────────────────────────────────%s\n", dim, reset)
 	summary := []string{}
 	if result.ErrorCount > 0 {
 		summary = append(summary, fmt.Sprintf("%s%d error(s)%s", red, result.ErrorCount, reset))
@@ -153,7 +163,7 @@ func (f *TextFormatter) Format(result *Result, w io.Writer) error {
 	if result.InfoCount > 0 {
 		summary = append(summary, fmt.Sprintf("%s%d info%s", blue, result.InfoCount, reset))
 	}
-	fmt.Fprintf(w, "%s %s\n\n", bold, strings.Join(summary, ", "))
+	fprintf(w, "%s %s\n\n", bold, strings.Join(summary, ", "))
 
 	return nil
 }
@@ -245,17 +255,17 @@ func (f *GitHubFormatter) Format(result *Result, w io.Writer) error {
 
 		// Format: ::{level} {params}::{message}
 		if len(params) > 0 {
-			fmt.Fprintf(w, "::%s %s::%s\n", level, strings.Join(params, ","), message)
+			fprintf(w, "::%s %s::%s\n", level, strings.Join(params, ","), message)
 		} else {
-			fmt.Fprintf(w, "::%s::%s\n", level, message)
+			fprintf(w, "::%s::%s\n", level, message)
 		}
 	}
 
 	// Summary annotation
-	fmt.Fprintf(w, "::group::Lint Summary\n")
-	fmt.Fprintf(w, "Total: %d issue(s) - %d error(s), %d warning(s), %d info\n",
+	fprintf(w, "::group::Lint Summary\n")
+	fprintf(w, "Total: %d issue(s) - %d error(s), %d warning(s), %d info\n",
 		len(result.Issues), result.ErrorCount, result.WarnCount, result.InfoCount)
-	fmt.Fprintf(w, "::endgroup::\n")
+	fprintf(w, "::endgroup::\n")
 
 	return nil
 }
@@ -481,8 +491,8 @@ func (f *SARIFFormatter) Format(result *Result, w io.Writer) error {
 type CheckstyleFormatter struct{}
 
 func (f *CheckstyleFormatter) Format(result *Result, w io.Writer) error {
-	fmt.Fprintln(w, `<?xml version="1.0" encoding="UTF-8"?>`)
-	fmt.Fprintln(w, `<checkstyle version="4.3">`)
+	fprintln(w, `<?xml version="1.0" encoding="UTF-8"?>`)
+	fprintln(w, `<checkstyle version="4.3">`)
 
 	// Group by file
 	byFile := make(map[string][]Issue)
@@ -495,7 +505,7 @@ func (f *CheckstyleFormatter) Format(result *Result, w io.Writer) error {
 	}
 
 	for filePath, issues := range byFile {
-		fmt.Fprintf(w, `  <file name="%s">`+"\n", escapeXML(filePath))
+		fprintf(w, `  <file name="%s">`+"\n", escapeXML(filePath))
 		for _, issue := range issues {
 			severity := "info"
 			switch issue.Severity {
@@ -510,13 +520,13 @@ func (f *CheckstyleFormatter) Format(result *Result, w io.Writer) error {
 				line = 1
 			}
 
-			fmt.Fprintf(w, `    <error line="%d" severity="%s" message="%s" source="%s"/>`+"\n",
+			fprintf(w, `    <error line="%d" severity="%s" message="%s" source="%s"/>`+"\n",
 				line, severity, escapeXML(issue.Message), escapeXML(issue.RuleID))
 		}
-		fmt.Fprintln(w, `  </file>`)
+		fprintln(w, `  </file>`)
 	}
 
-	fmt.Fprintln(w, `</checkstyle>`)
+	fprintln(w, `</checkstyle>`)
 	return nil
 }
 

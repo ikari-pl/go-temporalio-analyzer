@@ -168,7 +168,16 @@ func (p *goParser) classifyFunction(fn *ast.FuncDecl) string {
 				}
 			}
 		}
-		if p.isActivityContext(firstParam.Type) {
+		// For activity detection, be more conservative to reduce false positives:
+		// Only classify as activity if:
+		// 1. First param is context.Context
+		// 2. Is a method (has receiver) - standalone funcs with ctx are common helpers
+		// 3. Is exported (capitalized) - private methods are likely helpers
+		// 4. Returns error as last return value - activities should return errors
+		if p.isActivityContext(firstParam.Type) &&
+			fn.Recv != nil && len(fn.Recv.List) > 0 && // Must be a method
+			len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z' && // Must be exported
+			p.returnsError(fn) { // Must return error
 			return "activity"
 		}
 	}
@@ -384,6 +393,21 @@ func (p *goParser) isActivityContext(expr ast.Expr) bool {
 		if ident, ok := t.X.(*ast.Ident); ok {
 			return ident.Name == "context" && t.Sel.Name == "Context"
 		}
+	}
+	return false
+}
+
+// returnsError checks if the function returns error as its last return value.
+// This is a common pattern for activities which should always return errors.
+func (p *goParser) returnsError(fn *ast.FuncDecl) bool {
+	if fn.Type.Results == nil || len(fn.Type.Results.List) == 0 {
+		return false
+	}
+
+	// Check the last return value
+	lastResult := fn.Type.Results.List[len(fn.Type.Results.List)-1]
+	if ident, ok := lastResult.Type.(*ast.Ident); ok {
+		return ident.Name == "error"
 	}
 	return false
 }

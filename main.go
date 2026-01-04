@@ -16,11 +16,31 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 )
 
+// Version information (set via ldflags)
+var (
+	Version   = "dev"
+	BuildTime = "unknown"
+)
+
 func main() {
+	// Handle --version before anything else (check args directly)
+	for _, arg := range os.Args[1:] {
+		if arg == "--version" || arg == "-version" || arg == "-v" {
+			fmt.Printf("temporal-analyzer %s\n", Version)
+			fmt.Printf("Built: %s\n", BuildTime)
+			return
+		}
+	}
+
+	// Handle "lint" subcommand: transform to --lint flag for compatibility
+	// This allows: `temporal-analyzer lint [flags] [path]`
+	// to work the same as: `temporal-analyzer --lint [flags] [path]`
+	os.Args = transformLintSubcommand(os.Args)
+
 	// Create config
 	cfg := config.NewConfig()
 
-	// Parse command line flags first
+	// Parse command line flags
 	if err := cfg.ParseFlags(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
@@ -294,7 +314,7 @@ func runLint(cfg *config.Config, logger *slog.Logger, analyzerInstance analyzer.
 			fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
 			return 2
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		out = f
 	}
 
@@ -387,4 +407,49 @@ func severityFromString(s string) lint.Severity {
 	default:
 		return lint.SeverityInfo
 	}
+}
+
+// transformLintSubcommand transforms "lint" subcommand style into flag style.
+// This allows: `temporal-analyzer lint --format=github ./...`
+// to work the same as: `temporal-analyzer --lint --lint-format=github ./...`
+func transformLintSubcommand(args []string) []string {
+	if len(args) < 2 {
+		return args
+	}
+
+	// Check if first argument after program name is "lint"
+	if args[1] != "lint" {
+		return args
+	}
+
+	// Transform the arguments:
+	// 1. Remove "lint" subcommand and add --lint flag
+	// 2. Transform --format= to --lint-format= (common mistake)
+	// 3. Transform -format= to -lint-format=
+	newArgs := make([]string, 0, len(args))
+	newArgs = append(newArgs, args[0]) // program name
+	newArgs = append(newArgs, "--lint")
+
+	for i := 2; i < len(args); i++ {
+		arg := args[i]
+
+		// Transform --format=X or -format=X to --lint-format=X in lint mode
+		if strings.HasPrefix(arg, "--format=") {
+			arg = "--lint-format=" + strings.TrimPrefix(arg, "--format=")
+		} else if strings.HasPrefix(arg, "-format=") {
+			arg = "--lint-format=" + strings.TrimPrefix(arg, "-format=")
+		} else if arg == "--format" || arg == "-format" {
+			// Handle --format X (space-separated) form
+			arg = "--lint-format"
+		}
+
+		// Transform github-actions to github (the actual valid format name)
+		if strings.HasSuffix(arg, "=github-actions") {
+			arg = strings.TrimSuffix(arg, "=github-actions") + "=github"
+		}
+
+		newArgs = append(newArgs, arg)
+	}
+
+	return newArgs
 }

@@ -17,3 +17,8 @@ Thumbs.db
 *.json.out
 coverage.out
 
+# Demo artifacts (demo.yml contains user-specific paths)
+demo.yml
+demo.yaml
+
+output.gif

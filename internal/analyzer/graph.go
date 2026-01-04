@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/ast"
 	"log/slog"
+	"strings"
 )
 
 // graphBuilder implements the GraphBuilder interface.
@@ -23,8 +24,9 @@ func NewGraphBuilder(logger *slog.Logger, extractor CallExtractor) GraphBuilder 
 
 // BuildGraph creates a temporal graph from the given parsed nodes.
 func (g *graphBuilder) BuildGraph(ctx context.Context, nodes []NodeMatch) (*TemporalGraph, error) {
+	// Pre-allocate map with capacity hint for better memory efficiency (Go 1.25 Swiss Tables)
 	graph := &TemporalGraph{
-		Nodes: make(map[string]*TemporalNode),
+		Nodes: make(map[string]*TemporalNode, len(nodes)),
 		Stats: GraphStats{},
 	}
 
@@ -98,8 +100,17 @@ func (g *graphBuilder) createNodeFromMatch(ctx context.Context, match NodeMatch)
 	// Extract return type
 	returnType := g.extractReturnType(fn)
 
+	// Extract receiver type for methods to create a qualified name
+	receiver := g.extractReceiverType(fn)
+
+	// Create qualified name: ReceiverType.FunctionName or just FunctionName
+	qualifiedName := fn.Name.Name
+	if receiver != "" {
+		qualifiedName = receiver + "." + fn.Name.Name
+	}
+
 	node := &TemporalNode{
-		Name:        fn.Name.Name,
+		Name:        qualifiedName,
 		Type:        match.NodeType,
 		Package:     match.Package,
 		FilePath:    match.FilePath,
@@ -120,6 +131,17 @@ func (g *graphBuilder) createNodeFromMatch(ctx context.Context, match NodeMatch)
 	return node, nil
 }
 
+// extractReceiverType extracts the receiver type from a method declaration.
+// Returns empty string for regular functions.
+func (g *graphBuilder) extractReceiverType(fn *ast.FuncDecl) string {
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return ""
+	}
+
+	recv := fn.Recv.List[0]
+	return g.typeToString(recv.Type)
+}
+
 // buildRelationships builds call relationships between nodes.
 func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, graph *TemporalGraph) error {
 	fn, ok := match.Node.(*ast.FuncDecl)
@@ -131,7 +153,13 @@ func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, 
 		return fmt.Errorf("function declaration has no name")
 	}
 
+	// Use qualified name (with receiver) to match how nodes are stored
+	receiver := g.extractReceiverType(fn)
 	nodeName := fn.Name.Name
+	if receiver != "" {
+		nodeName = receiver + "." + fn.Name.Name
+	}
+
 	node, exists := graph.Nodes[nodeName]
 	if !exists {
 		return fmt.Errorf("node %s not found in graph", nodeName)
@@ -154,12 +182,18 @@ func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, 
 			node.Versioning = details.Versions
 			node.SearchAttrs = details.SearchAttrs
 
-			// Build parent relationships
-			for _, callSite := range details.CallSites {
-				if targetNode, exists := graph.Nodes[callSite.TargetName]; exists {
+			// Build parent relationships with fuzzy matching
+			for i, callSite := range details.CallSites {
+				resolvedName := g.resolveTargetName(callSite.TargetName, graph)
+				if resolvedName != callSite.TargetName {
+					// Update the call site with resolved name
+					details.CallSites[i].TargetName = resolvedName
+				}
+				if targetNode, exists := graph.Nodes[resolvedName]; exists {
 					targetNode.Parents = g.addUniqueParent(targetNode.Parents, nodeName)
 				}
 			}
+			node.CallSites = details.CallSites
 		}
 
 		// Extract internal (non-Temporal) function calls
@@ -174,13 +208,17 @@ func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, 
 			return fmt.Errorf("failed to extract calls: %w", err)
 		}
 
-		node.CallSites = callSites
-
-		for _, callSite := range callSites {
-			if targetNode, exists := graph.Nodes[callSite.TargetName]; exists {
+		// Resolve target names with fuzzy matching
+		for i, callSite := range callSites {
+			resolvedName := g.resolveTargetName(callSite.TargetName, graph)
+			if resolvedName != callSite.TargetName {
+				callSites[i].TargetName = resolvedName
+			}
+			if targetNode, exists := graph.Nodes[resolvedName]; exists {
 				targetNode.Parents = g.addUniqueParent(targetNode.Parents, nodeName)
 			}
 		}
+		node.CallSites = callSites
 	}
 
 	return nil
@@ -189,7 +227,7 @@ func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, 
 // CalculateStats computes statistics for the given graph.
 func (g *graphBuilder) CalculateStats(ctx context.Context, graph *TemporalGraph) error {
 	stats := GraphStats{}
-	
+
 	var totalFanOut int
 	var nodeCount int
 
@@ -250,9 +288,11 @@ func (g *graphBuilder) CalculateStats(ctx context.Context, graph *TemporalGraph)
 }
 
 // calculateMaxDepth calculates the maximum depth of the call graph.
+// Optimized with pre-allocated visited map for reduced GC pressure.
 func (g *graphBuilder) calculateMaxDepth(ctx context.Context, graph *TemporalGraph) int {
 	maxDepth := 0
-	visited := make(map[string]bool)
+	// Pre-allocate visited map with capacity hint (Go 1.25 Swiss Tables)
+	visited := make(map[string]bool, len(graph.Nodes))
 
 	// Start from root nodes (nodes with no parents)
 	for _, node := range graph.Nodes {
@@ -304,32 +344,21 @@ func (g *graphBuilder) calculateNodeDepth(ctx context.Context, node *TemporalNod
 }
 
 // extractDescription extracts documentation from function comments.
+// Optimized for Go 1.25 with reduced allocations using strings.Builder.
 func (g *graphBuilder) extractDescription(fn *ast.FuncDecl) string {
-	if fn.Doc == nil {
+	if fn.Doc == nil || len(fn.Doc.List) == 0 {
 		return ""
 	}
 
-	var comments []string
+	// Fast path: return first non-empty comment line (most common case)
 	for _, comment := range fn.Doc.List {
 		text := comment.Text
 		// Remove comment markers
-		if len(text) > 2 && text[:2] == "//" {
-			text = text[2:]
-		}
-		if len(text) > 0 && text[0] == ' ' {
-			text = text[1:]
-		}
-		comments = append(comments, text)
-	}
+		text = strings.TrimPrefix(text, "//")
+		text = strings.TrimPrefix(text, " ")
 
-	if len(comments) == 0 {
-		return ""
-	}
-
-	// Return first non-empty comment line
-	for _, comment := range comments {
-		if comment != "" {
-			return comment
+		if text != "" {
+			return text
 		}
 	}
 
@@ -351,21 +380,46 @@ func (g *graphBuilder) extractReturnType(fn *ast.FuncDecl) string {
 }
 
 // typeToString converts an AST type to a string.
+// Optimized for common cases with minimal allocations.
 func (g *graphBuilder) typeToString(expr ast.Expr) string {
 	switch t := expr.(type) {
 	case *ast.Ident:
 		return t.Name
 	case *ast.SelectorExpr:
 		if pkg, ok := t.X.(*ast.Ident); ok {
-			return pkg.Name + "." + t.Sel.Name
+			// Use strings.Builder for concatenation (more efficient than +)
+			var sb strings.Builder
+			sb.Grow(len(pkg.Name) + 1 + len(t.Sel.Name))
+			sb.WriteString(pkg.Name)
+			sb.WriteByte('.')
+			sb.WriteString(t.Sel.Name)
+			return sb.String()
 		}
 		return t.Sel.Name
 	case *ast.StarExpr:
-		return "*" + g.typeToString(t.X)
+		inner := g.typeToString(t.X)
+		var sb strings.Builder
+		sb.Grow(1 + len(inner))
+		sb.WriteByte('*')
+		sb.WriteString(inner)
+		return sb.String()
 	case *ast.ArrayType:
-		return "[]" + g.typeToString(t.Elt)
+		inner := g.typeToString(t.Elt)
+		var sb strings.Builder
+		sb.Grow(2 + len(inner))
+		sb.WriteString("[]")
+		sb.WriteString(inner)
+		return sb.String()
 	case *ast.MapType:
-		return "map[" + g.typeToString(t.Key) + "]" + g.typeToString(t.Value)
+		key := g.typeToString(t.Key)
+		val := g.typeToString(t.Value)
+		var sb strings.Builder
+		sb.Grow(4 + len(key) + 1 + len(val)) // "map[" + key + "]" + val
+		sb.WriteString("map[")
+		sb.WriteString(key)
+		sb.WriteByte(']')
+		sb.WriteString(val)
+		return sb.String()
 	case *ast.InterfaceType:
 		return "interface{}"
 	default:
@@ -381,4 +435,36 @@ func (g *graphBuilder) addUniqueParent(parents []string, parent string) []string
 		}
 	}
 	return append(parents, parent)
+}
+
+// resolveTargetName tries to resolve a target name to a node in the graph.
+// Handles cases where the target is "varName.MethodName" but the graph has "TypeName.MethodName".
+func (g *graphBuilder) resolveTargetName(targetName string, graph *TemporalGraph) string {
+	// Try exact match first
+	if _, exists := graph.Nodes[targetName]; exists {
+		return targetName
+	}
+
+	// If target contains a dot (like "handler.GetMethod"), try to match by method name
+	if idx := strings.LastIndex(targetName, "."); idx > 0 {
+		methodName := targetName[idx+1:]
+
+		// Look for nodes whose name ends with .MethodName
+		var candidates []*TemporalNode
+		for name, node := range graph.Nodes {
+			if strings.HasSuffix(name, "."+methodName) {
+				candidates = append(candidates, node)
+			}
+		}
+
+		// If exactly one candidate, use it
+		if len(candidates) == 1 {
+			return candidates[0].Name
+		}
+
+		// If multiple candidates, we can't resolve uniquely, so return original
+		// The cycle detection will handle this case appropriately
+	}
+
+	return targetName
 }

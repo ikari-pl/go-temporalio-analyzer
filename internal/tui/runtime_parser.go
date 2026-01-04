@@ -68,8 +68,8 @@ func (rp *RuntimeParser) findModuleRoot(startDir string) string {
 // findFunctionInModule searches for a function in all Go files under the module root.
 func (rp *RuntimeParser) findFunctionInModule(name string, moduleRoot string, skipDir string) *analyzer.TemporalNode {
 	var result *analyzer.TemporalNode
-	
-	filepath.WalkDir(moduleRoot, func(path string, d os.DirEntry, err error) error {
+
+	_ = filepath.WalkDir(moduleRoot, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // Skip errors, continue walking
 		}

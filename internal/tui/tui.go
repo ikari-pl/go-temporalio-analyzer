@@ -298,7 +298,7 @@ func (m *model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Switch to list view
 		m.state.PreviousView = m.state.CurrentView
 		m.state.CurrentView = ViewList
-		m.viewManager.SwitchView(ViewList)
+		_ = m.viewManager.SwitchView(ViewList)
 		return m, nil
 
 	case "2":
@@ -309,7 +309,7 @@ func (m *model) handleKeyPress(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Switch to stats view
 		m.state.PreviousView = m.state.CurrentView
 		m.state.CurrentView = ViewStats
-		m.viewManager.SwitchView(ViewStats)
+		_ = m.viewManager.SwitchView(ViewStats)
 		return m, nil
 
 	case "w":
@@ -376,7 +376,7 @@ func (m *model) handleBackNavigation() (tea.Model, tea.Cmd) {
 	}
 
 	m.state.CurrentView = ViewList
-	m.viewManager.SwitchView(ViewList)
+	_ = m.viewManager.SwitchView(ViewList)
 	return m, nil
 }
 
@@ -388,7 +388,7 @@ func (m *model) handleTreeView() (tea.Model, tea.Cmd) {
 	// Switch to tree view
 	m.state.PreviousView = m.state.CurrentView
 	m.state.CurrentView = ViewTree
-	m.viewManager.SwitchView(ViewTree)
+	_ = m.viewManager.SwitchView(ViewTree)
 
 	// Initialize tree state if needed
 	if len(m.state.TreeState.Items) == 0 {
@@ -476,7 +476,7 @@ func (m *model) restoreState(viewState ViewState) {
 	}
 
 	// Switch to the appropriate view
-	m.viewManager.SwitchView(viewState.View)
+	_ = m.viewManager.SwitchView(viewState.View)
 
 	// Restore view-specific state
 	switch viewState.View {
