@@ -1223,10 +1223,11 @@ func (dv *detailsView) renderCallsSection(state *State, node *analyzer.TemporalN
 
 	if len(node.CallSites) == 0 {
 		content.WriteString(emptyStyle.Render("  No outgoing calls") + "\n")
-				} else {
+	} else {
 		for i, call := range node.CallSites {
+			// SelectableItems order: calls first, then parents, then internal calls
+			// So calls are at indices 0..len(CallSites)-1
 			isSelected := state.DetailsState != nil &&
-				i < len(state.DetailsState.SelectableItems) &&
 				state.DetailsState.SelectedIndex == i
 
 			line := dv.renderCallItem(state, call, isSelected)

@@ -69,9 +69,12 @@ func (n *navigator) AddToPath(node *analyzer.TemporalNode, direction string) {
 	n.path = append(n.path, pathItem)
 }
 
-// GetPath returns the current navigation path.
+// GetPath returns a copy of the current navigation path.
 func (n *navigator) GetPath() []PathItem {
-	return n.path
+	// Return a copy to prevent external mutation
+	pathCopy := make([]PathItem, len(n.path))
+	copy(pathCopy, n.path)
+	return pathCopy
 }
 
 // ClearPath clears the navigation path.

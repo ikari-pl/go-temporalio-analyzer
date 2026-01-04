@@ -594,11 +594,43 @@ func (e *callExtractor) extractVersion(call *ast.CallExpr, lineNum int) VersionD
 
 // extractSearchAttr extracts search attribute information.
 func (e *callExtractor) extractSearchAttr(call *ast.CallExpr, lineNum int) SearchAttrDef {
-	return SearchAttrDef{
+	def := SearchAttrDef{
 		LineNumber: lineNum,
 		Operation:  "upsert",
-		Name:       "search_attributes",
 	}
+
+	// Try to extract the search attribute name from the call arguments
+	// UpsertSearchAttributes takes a map, try to extract keys
+	if len(call.Args) > 0 {
+		// Check if it's a composite literal (map)
+		if comp, ok := call.Args[0].(*ast.CompositeLit); ok {
+			var names []string
+			for _, elt := range comp.Elts {
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					if key, ok := kv.Key.(*ast.BasicLit); ok {
+						// Remove quotes from string literal
+						name := strings.Trim(key.Value, "\"")
+						names = append(names, name)
+					} else if key, ok := kv.Key.(*ast.Ident); ok {
+						names = append(names, key.Name)
+					}
+				}
+			}
+			if len(names) > 0 {
+				def.Name = strings.Join(names, ", ")
+				return def
+			}
+		}
+		// Try to extract from identifier or selector
+		def.Name = e.exprToString(call.Args[0])
+		if def.Name == "" {
+			def.Name = "search_attributes"
+		}
+	} else {
+		def.Name = "search_attributes"
+	}
+
+	return def
 }
 
 // extractOptions extracts workflow/activity options from a call.
@@ -687,7 +719,7 @@ func (e *callExtractor) isWithOptionsCall(call *ast.CallExpr) bool {
 		if ident, ok := sel.X.(*ast.Ident); ok {
 			return ident.Name == "workflow" &&
 				(sel.Sel.Name == "WithActivityOptions" || 
-				 sel.Sel.Name == "WithChildOptions" ||
+				 sel.Sel.Name == "WithChildWorkflowOptions" ||
 				 sel.Sel.Name == "WithLocalActivityOptions")
 		}
 	}
