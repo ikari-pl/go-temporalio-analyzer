@@ -4,7 +4,7 @@ package output
 import (
 	"context"
 	"io"
-	"temporal-analyzer/internal/analyzer"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/analyzer"
 )
 
 // Formatter provides methods for formatting temporal graphs into different output formats.

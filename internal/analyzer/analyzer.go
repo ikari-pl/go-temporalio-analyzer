@@ -3,7 +3,7 @@ package analyzer
 import (
 	"context"
 	"log/slog"
-	"temporal-analyzer/internal/config"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/config"
 )
 
 // analyzer implements the Analyzer interface and provides the main entry point.

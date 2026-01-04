@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"temporal-analyzer/internal/analyzer"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/analyzer"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"

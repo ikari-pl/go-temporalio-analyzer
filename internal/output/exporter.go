@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"temporal-analyzer/internal/analyzer"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/analyzer"
 )
 
 // Exporter provides export functionality for the graph.

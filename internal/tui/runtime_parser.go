@@ -7,7 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"temporal-analyzer/internal/analyzer"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/analyzer"
 )
 
 // RuntimeParser provides on-demand parsing of Go source files.

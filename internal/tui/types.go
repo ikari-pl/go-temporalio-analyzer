@@ -2,7 +2,7 @@ package tui
 
 import (
 	"fmt"
-	"temporal-analyzer/internal/analyzer"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/analyzer"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"

@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"temporal-analyzer/internal/analyzer"
-	"temporal-analyzer/internal/config"
-	"temporal-analyzer/internal/output"
-	"temporal-analyzer/internal/tui"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/analyzer"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/config"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/output"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/tui"
 
 	"github.com/charmbracelet/bubbles/list"
 )

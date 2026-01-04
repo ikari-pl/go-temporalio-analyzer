@@ -2,7 +2,7 @@ package tui
 
 import (
 	"strings"
-	"temporal-analyzer/internal/analyzer"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/analyzer"
 )
 
 // navigator implements the Navigator interface.

@@ -5,8 +5,8 @@ package tui
 import (
 	"context"
 
-	"temporal-analyzer/internal/analyzer"
-	"temporal-analyzer/internal/tui/theme"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/analyzer"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/tui/theme"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"

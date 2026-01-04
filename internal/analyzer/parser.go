@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-	"temporal-analyzer/internal/config"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/config"
 )
 
 // goParser implements the Parser interface.

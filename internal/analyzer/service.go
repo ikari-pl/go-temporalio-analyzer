@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"temporal-analyzer/internal/config"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/config"
 )
 
 // service implements the Service interface.

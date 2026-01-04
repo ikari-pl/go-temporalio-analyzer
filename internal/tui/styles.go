@@ -3,7 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"temporal-analyzer/internal/tui/theme"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/tui/theme"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"

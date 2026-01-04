@@ -3,7 +3,7 @@ package analyzer
 import (
 	"context"
 	"go/ast"
-	"temporal-analyzer/internal/config"
+	"github.com/ikari-pl/go-temporalio-analyzer/internal/config"
 )
 
 // Analyzer provides methods for analyzing Temporal.io codebases.

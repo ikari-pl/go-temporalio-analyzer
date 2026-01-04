@@ -75,6 +75,7 @@ globs: *
 * The initial view should only show top-level workflows from the tree.
 * Provide options to toggle the visibility of activities, signals, and other components.
 * The `/` search function should not shift the layout down, and should react to typing.
+* When a filter is active, it should be visually clear in the TUI.
 
 ## INTERNAL CALLS
 * The tool should also track "internal" non-Temporal function calls within Activities

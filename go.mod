@@ -1,4 +1,4 @@
-module temporal-analyzer
+module github.com/ikari-pl/go-temporalio-analyzer
 
 go 1.24.3
 
