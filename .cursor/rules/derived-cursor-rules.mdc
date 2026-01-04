@@ -7,7 +7,7 @@ globs: *
 <headers/>
 
 ## TECH STACK
-*   Go (version 1.21 or later)
+*   Go (version 1.25 or later). Use any new features if applicable.
 *   Temporal.io Go SDK
 *   Bubbletea TUI Framework
 *   Charmbracelet Lipgloss
@@ -16,6 +16,7 @@ globs: *
 *   The project includes comprehensive documentation.
 *   Use code comments and descriptions to clearly explain the purpose and function of different code sections.
 *   Keep documentation up-to-date with any changes to the codebase.
+*   Aim for 100% code coverage.
 
 ## CODING STANDARDS
 *   Follow Go coding conventions and best practices.
@@ -26,6 +27,9 @@ globs: *
 ## WORKFLOW &amp; RELEASE RULES
 *   All code changes must be reviewed before being merged.
 *   Implement comprehensive unit and integration tests for all new features.
+*   Add a Codecov CI configuration. The `CODECOV_TOKEN` is in place.
+*   Add a `make install` command that installs the library globally in a writable directory that's in the PATH.
+*   Add a `make build` command.
 
 ## DEBUGGING
 *   Use logging and debugging tools to identify and resolve issues.
@@ -109,6 +113,7 @@ globs: *
 *   In the tree view, show internal calls (non-Temporal function calls) within Activities.
 *   In the tree view, provide options to group the workflow by package or call hierarchy.
 *   In the tree view, "by package" should use FQNs (grouping by common parent), otherwise it's too many.
+*   Implement an optional positional argument for specifying the path of the project to scan. If not specified, defaults to the current working directory. This is an easier alternative to the `--root-dir` flag.
 
 ## CI/CD INTEGRATION
 *   Implement a "lint" mode to use the analyzer in CI/CD pipelines. This mode should run non-interactively and report issues/violations in a CI-friendly format that could fail a CI build.
@@ -136,3 +141,13 @@ globs: *
 *   **SignalWithoutHandlerRule (TA031)**: Unhandled signals are silently dropped. External systems sending signals believe they're communicating with the workflow, but the data goes nowhere—a silent failure that's hard to debug.
 *   **QueryWithoutReturnRule (TA032)**: Queries exist so external systems can inspect workflow state without affecting execution. A query that returns nothing defeats its purpose and leaves callers without the insight they need.
 *   **ContinueAsNewWithoutConditionRule (TA033)**: Without termination conditions, continue-as-new workflows run forever, accumulating costs and never completing. Every long-running workflow should have a defined end state or maximum iterations.
+
+## GENERAL NOTES
+* Record and render a terminalizer demo.
+* Implement an optional positional argument for specifying the path of the project to scan. If not specified, defaults to the current working directory. This is an easier alternative to the `--root-dir` flag.
+* Upgrade to Go 1.25 (or latest stable) and update go.mod
+* Add Codecov CI config with GitHub Actions workflow
+* Create Makefile with build, install, and test targets
+* Implement Go 1.25 style optimizations
+* Update the README with installation instructions and usage examples.
+* **Positional Argument** - The path argument can now appear **anywhere** in the command line. The argument is extracted before flag processing and is used if the `--root` flag is not explicitly set.
