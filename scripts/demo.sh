@@ -2,8 +2,14 @@
 # Demo script for temporal-analyzer
 # This script showcases the main features of the tool
 # Run this while terminalizer is recording
+#
+# Usage: ./scripts/demo.sh [path]
+#   path - Optional path to analyze (default: current directory)
 
 set -e
+
+# Parse optional path argument
+TARGET_PATH="${1:-.}"
 
 # Colors
 GREEN='\033[0;32m'
@@ -26,6 +32,7 @@ type_cmd() {
 clear
 echo -e "${GREEN}⚡ temporal-analyzer demo${NC}"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo -e "Target: ${BLUE}${TARGET_PATH}${NC}"
 echo ""
 sleep 1
 
@@ -41,10 +48,10 @@ type_cmd "temporal-analyzer --help"
 sleep 2
 echo ""
 
-# Run lint mode
+# Run lint mode (may find issues - that's expected for demo purposes)
 echo -e "${YELLOW}# Run in lint mode for CI/CD:${NC}"
 sleep 0.5
-type_cmd "temporal-analyzer --lint ."
+type_cmd "temporal-analyzer --lint ${TARGET_PATH} || true"
 sleep 2
 echo ""
 
@@ -58,17 +65,16 @@ echo ""
 # Export to different formats
 echo -e "${YELLOW}# Export to Mermaid diagram:${NC}"
 sleep 0.5
-type_cmd "temporal-analyzer --format mermaid . | head -20"
+type_cmd "temporal-analyzer --format mermaid ${TARGET_PATH} | head -20"
 sleep 2
 echo ""
 
 # Launch TUI
 echo -e "${YELLOW}# Launch interactive TUI:${NC}"
 sleep 0.5
-echo -e "${BLUE}➜${NC} temporal-analyzer ."
+echo -e "${BLUE}➜${NC} temporal-analyzer ${TARGET_PATH}"
 echo "(Press 'q' to quit, '?' for help)"
 sleep 1
 
 # The actual TUI launch
-temporal-analyzer .
-
+temporal-analyzer "${TARGET_PATH}"

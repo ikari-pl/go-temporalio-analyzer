@@ -84,7 +84,9 @@ func TestAnalyzeWorkflowsContextCancellation(t *testing.T) {
 func Test() {}
 `
 	file := filepath.Join(tmpDir, "test.go")
-	os.WriteFile(file, []byte(content), 0644)
+	if err := os.WriteFile(file, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to write test file: %v", err)
+	}
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	parser := NewParser(logger)

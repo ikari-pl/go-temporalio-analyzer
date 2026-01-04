@@ -741,8 +741,14 @@ func TestExportConsistentOrdering(t *testing.T) {
 	mIndex := strings.Index(dotOutput, "MWorkflow")
 	zIndex := strings.Index(dotOutput, "ZWorkflow")
 
-	if aIndex > mIndex || mIndex > zIndex {
-		t.Error("ExportDOT does not maintain alphabetical ordering of nodes")
+	// Ensure all nodes are present in output
+	if aIndex == -1 || mIndex == -1 || zIndex == -1 {
+		t.Errorf("DOT output missing nodes: aIndex=%d, mIndex=%d, zIndex=%d", aIndex, mIndex, zIndex)
+	}
+
+	// Verify strict ascending order: A < M < Z (explicit check for all pairs)
+	if aIndex >= mIndex || mIndex >= zIndex || aIndex >= zIndex {
+		t.Errorf("ExportDOT does not maintain alphabetical ordering: A@%d, M@%d, Z@%d", aIndex, mIndex, zIndex)
 	}
 }
 

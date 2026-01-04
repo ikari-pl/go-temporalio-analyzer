@@ -154,23 +154,28 @@ clean:
 ## Record terminalizer demo
 demo-record:
 	@echo "🎬 Recording demo with terminalizer..."
-	@if command -v terminalizer >/dev/null 2>&1; then \
-		terminalizer record demo -c demo.yml; \
-	else \
+	@if [ ! -f demo.yml ]; then \
+		echo "❌ demo.yml not found. Create it from the example:"; \
+		echo "   cp demo.yml.example demo.yml"; \
+		echo "   Then edit demo.yml and update 'cwd' to your project path."; \
+		exit 1; \
+	fi
+	@if ! command -v terminalizer >/dev/null 2>&1; then \
 		echo "❌ terminalizer not found. Install with: npm install -g terminalizer"; \
 		exit 1; \
 	fi
+	terminalizer record demo -c demo.yml
 
 ## Render terminalizer demo to GIF
 demo-render:
 	@echo "🎬 Rendering demo to GIF..."
-	@if command -v terminalizer >/dev/null 2>&1; then \
-		terminalizer render demo -o demo.gif; \
-		echo "✅ Demo rendered: demo.gif"; \
-	else \
+	@if ! command -v terminalizer >/dev/null 2>&1; then \
 		echo "❌ terminalizer not found. Install with: npm install -g terminalizer"; \
 		exit 1; \
 	fi
+	@mkdir -p .github
+	terminalizer render demo -o .github/demo.gif
+	@echo "✅ Demo rendered: .github/demo.gif"
 
 ## Record and render demo
 demo: demo-record demo-render
