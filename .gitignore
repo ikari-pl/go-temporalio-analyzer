@@ -1,0 +1,19 @@
+# Binaries
+temporal-analyzer
+*.exe
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test/debug output
+*.sarif
+*.json.out
+coverage.out
+
