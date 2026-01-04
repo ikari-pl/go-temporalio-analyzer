@@ -183,6 +183,7 @@ func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, 
 			node.SearchAttrs = details.SearchAttrs
 
 			// Build parent relationships with fuzzy matching
+			// Also create stub nodes for unresolved activity/workflow targets
 			for i, callSite := range details.CallSites {
 				resolvedName := g.resolveTargetName(callSite.TargetName, graph)
 				if resolvedName != callSite.TargetName {
@@ -191,6 +192,16 @@ func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, 
 				}
 				if targetNode, exists := graph.Nodes[resolvedName]; exists {
 					targetNode.Parents = g.addUniqueParent(targetNode.Parents, nodeName)
+				} else if callSite.TargetType == "activity" || callSite.TargetType == "child_workflow" || callSite.TargetType == "local_activity" {
+					// Create stub node for unresolved activity/workflow targets
+					// This handles cases where the function is called via ExecuteActivity
+					// but wasn't detected during parsing
+					stubNode := &TemporalNode{
+						Name:    resolvedName,
+						Type:    callSite.TargetType,
+						Parents: []string{nodeName},
+					}
+					graph.Nodes[resolvedName] = stubNode
 				}
 			}
 			node.CallSites = details.CallSites
@@ -209,6 +220,7 @@ func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, 
 		}
 
 		// Resolve target names with fuzzy matching
+		// Also create stub nodes for unresolved activity/workflow targets
 		for i, callSite := range callSites {
 			resolvedName := g.resolveTargetName(callSite.TargetName, graph)
 			if resolvedName != callSite.TargetName {
@@ -216,6 +228,14 @@ func (g *graphBuilder) buildRelationships(ctx context.Context, match NodeMatch, 
 			}
 			if targetNode, exists := graph.Nodes[resolvedName]; exists {
 				targetNode.Parents = g.addUniqueParent(targetNode.Parents, nodeName)
+			} else if callSite.TargetType == "activity" || callSite.TargetType == "child_workflow" || callSite.TargetType == "local_activity" {
+				// Create stub node for unresolved activity/workflow targets
+				stubNode := &TemporalNode{
+					Name:    resolvedName,
+					Type:    callSite.TargetType,
+					Parents: []string{nodeName},
+				}
+				graph.Nodes[resolvedName] = stubNode
 			}
 		}
 		node.CallSites = callSites

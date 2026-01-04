@@ -26,11 +26,15 @@ func TestParseDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create a test workflow file
+	// Note: To be classified as a workflow, the function must have workflow.Context
+	// AND make workflow SDK calls (we don't use name-based detection)
 	workflowContent := `package testpkg
 
 import "go.temporal.io/sdk/workflow"
 
 func MyWorkflow(ctx workflow.Context) error {
+	// Must have workflow SDK call to be detected as a workflow
+	workflow.Sleep(ctx, 0)
 	return nil
 }
 
@@ -213,6 +217,8 @@ func MyWorkflow() {}
 }
 
 func TestIsWorkflow(t *testing.T) {
+	// Workflows are detected by workflow.Context parameter + workflow SDK calls.
+	// Name-based detection is NOT used.
 	tests := []struct {
 		name     string
 		code     string
@@ -220,11 +226,22 @@ func TestIsWorkflow(t *testing.T) {
 		want     bool
 	}{
 		{
-			name: "workflow by name suffix",
+			name: "workflow with context and SDK calls",
+			code: `package test
+import "go.temporal.io/sdk/workflow"
+func MyWorkflow(ctx workflow.Context) error {
+	workflow.ExecuteActivity(ctx, nil)
+	return nil
+}`,
+			funcName: "MyWorkflow",
+			want:     true,
+		},
+		{
+			name: "function with Workflow suffix but no context is NOT a workflow",
 			code: `package test
 func MyWorkflow() {}`,
 			funcName: "MyWorkflow",
-			want:     true,
+			want:     false, // No workflow.Context = not a workflow
 		},
 		{
 			name: "activity by name suffix",
@@ -268,6 +285,9 @@ func helper() {}`,
 }
 
 func TestIsActivity(t *testing.T) {
+	// Activities are NOT detected by name suffix alone anymore.
+	// They must be registered via worker.RegisterActivity() or called via ExecuteActivity()
+	// This test verifies that name-based detection is NOT used.
 	tests := []struct {
 		name     string
 		code     string
@@ -275,11 +295,11 @@ func TestIsActivity(t *testing.T) {
 		want     bool
 	}{
 		{
-			name: "activity by name suffix",
+			name: "function with Activity suffix is NOT classified as activity",
 			code: `package test
 func MyActivity() {}`,
 			funcName: "MyActivity",
-			want:     true,
+			want:     false, // Name-based detection removed
 		},
 		{
 			name: "workflow by name suffix",
@@ -316,6 +336,10 @@ func MyWorkflow() {}`,
 }
 
 func TestClassifyFunction(t *testing.T) {
+	// Classification is based on reliable detection methods only:
+	// - workflow.Context parameter + workflow SDK calls = workflow
+	// - SetSignalHandler/SetQueryHandler/SetUpdateHandler calls in body = handlers
+	// - Name-based detection is NOT used (too flaky)
 	tests := []struct {
 		name     string
 		code     string
@@ -323,52 +347,37 @@ func TestClassifyFunction(t *testing.T) {
 		want     string
 	}{
 		{
-			name:     "workflow suffix",
-			code:     `package test; func ProcessOrderWorkflow() {}`,
-			funcName: "ProcessOrderWorkflow",
+			name: "workflow with context and SDK calls",
+			code: `package test
+import "go.temporal.io/sdk/workflow"
+func MyWorkflow(ctx workflow.Context) error {
+	workflow.ExecuteActivity(ctx, nil)
+	return nil
+}`,
+			funcName: "MyWorkflow",
 			want:     "workflow",
 		},
 		{
-			name:     "activity suffix",
+			name: "workflow context without SDK calls is not classified",
+			code: `package test
+import "go.temporal.io/sdk/workflow"
+func MyWorkflow(ctx workflow.Context) error {
+	return nil
+}`,
+			funcName: "MyWorkflow",
+			want:     "", // No SDK calls = not classified as workflow
+		},
+		{
+			name:     "function with Activity suffix but no registration is not classified",
 			code:     `package test; func SendEmailActivity() {}`,
 			funcName: "SendEmailActivity",
-			want:     "activity",
+			want:     "", // Name-based detection removed
 		},
 		{
-			name:     "signal handler suffix",
-			code:     `package test; func CancelSignalHandler() {}`,
-			funcName: "CancelSignalHandler",
-			want:     "signal_handler",
-		},
-		{
-			name:     "signal suffix",
-			code:     `package test; func CancelSignal() {}`,
-			funcName: "CancelSignal",
-			want:     "signal_handler",
-		},
-		{
-			name:     "query handler suffix",
-			code:     `package test; func GetStateQueryHandler() {}`,
-			funcName: "GetStateQueryHandler",
-			want:     "query_handler",
-		},
-		{
-			name:     "query suffix",
-			code:     `package test; func GetStateQuery() {}`,
-			funcName: "GetStateQuery",
-			want:     "query_handler",
-		},
-		{
-			name:     "update handler suffix",
-			code:     `package test; func SetValueUpdateHandler() {}`,
-			funcName: "SetValueUpdateHandler",
-			want:     "update_handler",
-		},
-		{
-			name:     "update suffix",
-			code:     `package test; func SetValueUpdate() {}`,
-			funcName: "SetValueUpdate",
-			want:     "update_handler",
+			name:     "function with Workflow suffix but no context is not classified",
+			code:     `package test; func ProcessOrderWorkflow() {}`,
+			funcName: "ProcessOrderWorkflow",
+			want:     "", // No workflow.Context = not classified
 		},
 		{
 			name:     "regular function",

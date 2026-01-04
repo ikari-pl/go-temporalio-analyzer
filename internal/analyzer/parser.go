@@ -141,23 +141,15 @@ func (p *goParser) classifyFunction(fn *ast.FuncDecl) string {
 		return ""
 	}
 
-	name := fn.Name.Name
+	// Classification is based on reliable detection methods only:
+	// 1. workflow.Context parameter + workflow SDK calls = workflow
+	// 2. Registration via worker.RegisterActivity/RegisterWorkflow (TODO: implement)
+	// 3. Usage via ExecuteActivity, SetSignalHandler, etc. (tracked as call targets)
+	//
+	// We deliberately do NOT use name-based detection (e.g., *Activity, *Workflow suffixes)
+	// because it's too flaky and produces false positives.
 
-	// Check explicit naming patterns
-	switch {
-	case strings.HasSuffix(name, "Workflow"):
-		return "workflow"
-	case strings.HasSuffix(name, "Activity"):
-		return "activity"
-	case strings.HasSuffix(name, "SignalHandler") || strings.HasSuffix(name, "Signal"):
-		return "signal_handler"
-	case strings.HasSuffix(name, "QueryHandler") || strings.HasSuffix(name, "Query"):
-		return "query_handler"
-	case strings.HasSuffix(name, "UpdateHandler") || strings.HasSuffix(name, "Update"):
-		return "update_handler"
-	}
-
-	// Check based on first parameter type
+	// Check based on first parameter type (workflow.Context indicates a workflow)
 	if fn.Type.Params != nil && len(fn.Type.Params.List) > 0 {
 		firstParam := fn.Type.Params.List[0]
 		if p.isWorkflowContext(firstParam.Type) {
@@ -167,18 +159,6 @@ func (p *goParser) classifyFunction(fn *ast.FuncDecl) string {
 					return "workflow"
 				}
 			}
-		}
-		// For activity detection, be more conservative to reduce false positives:
-		// Only classify as activity if:
-		// 1. First param is context.Context
-		// 2. Is a method (has receiver) - standalone funcs with ctx are common helpers
-		// 3. Is exported (capitalized) - private methods are likely helpers
-		// 4. Returns error as last return value - activities should return errors
-		if p.isActivityContext(firstParam.Type) &&
-			fn.Recv != nil && len(fn.Recv.List) > 0 && // Must be a method
-			len(name) > 0 && name[0] >= 'A' && name[0] <= 'Z' && // Must be exported
-			p.returnsError(fn) { // Must return error
-			return "activity"
 		}
 	}
 
@@ -226,117 +206,26 @@ func (p *goParser) hasWorkflowCalls(body *ast.BlockStmt) bool {
 // isSignalHandler checks if this function is a signal handler by looking for
 // signal-specific patterns in the function body.
 func (p *goParser) isSignalHandler(fn *ast.FuncDecl) bool {
-	if fn.Body == nil {
-		return false
-	}
-
-	isHandler := false
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-
-		// Check for workflow.GetSignalChannel calls
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-			if ident, ok := sel.X.(*ast.Ident); ok {
-				if ident.Name == "workflow" && sel.Sel.Name == "GetSignalChannel" {
-					isHandler = true
-					return false
-				}
-			}
-		}
-		return true
-	})
-
-	return isHandler
-}
-
-// isQueryHandler checks if this function is a query handler by looking for
-// query-specific patterns. Query handlers typically have a specific signature
-// and don't perform side effects.
-func (p *goParser) isQueryHandler(fn *ast.FuncDecl) bool {
-	if fn.Body == nil {
-		return false
-	}
-
-	// Query handlers must return something (they answer queries)
-	if fn.Type.Results == nil || len(fn.Type.Results.List) == 0 {
-		return false
-	}
-
-	// Check for workflow.SetQueryHandler being called with this function's name
-	// or workflow-specific read patterns without execution calls
-	hasWorkflowContext := false
-	if fn.Type.Params != nil && len(fn.Type.Params.List) > 0 {
-		for _, param := range fn.Type.Params.List {
-			if p.isWorkflowContext(param.Type) {
-				hasWorkflowContext = true
-				break
-			}
-		}
-	}
-
-	// If it has workflow context and returns values but doesn't execute activities,
-	// it's likely a query handler
-	if hasWorkflowContext {
-		hasActivityCall := false
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-				if ident, ok := sel.X.(*ast.Ident); ok {
-					if ident.Name == "workflow" && 
-						(sel.Sel.Name == "ExecuteActivity" || 
-						 sel.Sel.Name == "ExecuteChildWorkflow" ||
-						 sel.Sel.Name == "ExecuteLocalActivity") {
-						hasActivityCall = true
-						return false
-					}
-				}
-			}
-			return true
-		})
-		// Query handlers don't execute activities
-		if !hasActivityCall {
-			return true
-		}
-	}
-
+	// Signal handlers are identified by how they're registered via SetSignalHandler,
+	// not by heuristics on the function itself. Detection is handled by the extractor.
 	return false
 }
 
-// isUpdateHandler checks if this function is an update handler by looking for
-// update-specific patterns like workflow.SetUpdateHandler or update validation.
+// isQueryHandler checks if this function is a query handler.
+// Query handlers are detected by finding SetQueryHandler calls in workflows,
+// not by heuristics on the handler function itself. The handler function
+// doesn't have any distinguishing pattern - it's just a regular function
+// passed to SetQueryHandler. Detection is handled by the extractor.
+func (p *goParser) isQueryHandler(fn *ast.FuncDecl) bool {
+	return false
+}
+
+// isUpdateHandler checks if this function is an update handler.
+// Update handlers are detected by finding SetUpdateHandler calls in workflows,
+// not by heuristics on the handler function itself. Detection is handled
+// by the extractor.
 func (p *goParser) isUpdateHandler(fn *ast.FuncDecl) bool {
-	if fn.Body == nil {
-		return false
-	}
-
-	isHandler := false
-	ast.Inspect(fn.Body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
-		}
-
-		// Check for workflow update-related calls
-		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-			if ident, ok := sel.X.(*ast.Ident); ok {
-				if ident.Name == "workflow" && 
-					(sel.Sel.Name == "SetUpdateHandler" ||
-					 sel.Sel.Name == "SetUpdateHandlerWithOptions") {
-					isHandler = true
-					return false
-				}
-			}
-		}
-		return true
-	})
-
-	return isHandler
+	return false
 }
 
 // applyFilters applies the configured filters to the matches.

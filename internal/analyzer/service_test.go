@@ -27,11 +27,15 @@ func TestAnalyzeWorkflows(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	// Create a test workflow file
+	// Note: To be classified as a workflow, the function must have workflow.Context
+	// AND make workflow SDK calls. Activities are detected when called via ExecuteActivity.
 	content := `package test
 
 import "go.temporal.io/sdk/workflow"
 
 func MyWorkflow(ctx workflow.Context) error {
+	// Call activity to create a stub node for it
+	workflow.ExecuteActivity(ctx, MyActivity).Get(ctx, nil)
 	return nil
 }
 
