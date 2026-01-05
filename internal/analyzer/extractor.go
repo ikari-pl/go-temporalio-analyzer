@@ -720,12 +720,6 @@ func (e *callExtractor) ExtractParameters(fn *ast.FuncDecl) map[string]string {
 	return params
 }
 
-// extractTemporalTarget extracts the target function name from a Temporal API call.
-func (e *callExtractor) extractTemporalTarget(call *ast.CallExpr) string {
-	target, _, _ := e.extractTemporalTargetWithArgs(call)
-	return target
-}
-
 // extractTemporalTargetWithArgs extracts the target function name and argument info from a Temporal API call.
 // Returns: target name, argument count (excluding ctx and target func), argument types
 func (e *callExtractor) extractTemporalTargetWithArgs(call *ast.CallExpr) (string, int, []string) {
@@ -843,19 +837,6 @@ func (e *callExtractor) extractResultType(expr ast.Expr) string {
 		return "call"
 	}
 	return "unknown"
-}
-
-// isWithOptionsCall checks if a call is workflow.WithActivityOptions or similar.
-func (e *callExtractor) isWithOptionsCall(call *ast.CallExpr) bool {
-	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-		if ident, ok := sel.X.(*ast.Ident); ok {
-			return ident.Name == "workflow" &&
-				(sel.Sel.Name == "WithActivityOptions" ||
-					sel.Sel.Name == "WithChildWorkflowOptions" ||
-					sel.Sel.Name == "WithLocalActivityOptions")
-		}
-	}
-	return false
 }
 
 // isLikelyTemporalFunction checks if a function name suggests it's a temporal function.

@@ -333,21 +333,6 @@ func (p *goParser) isActivityContext(expr ast.Expr) bool {
 	return false
 }
 
-// returnsError checks if the function returns error as its last return value.
-// This is a common pattern for activities which should always return errors.
-func (p *goParser) returnsError(fn *ast.FuncDecl) bool {
-	if fn.Type.Results == nil || len(fn.Type.Results.List) == 0 {
-		return false
-	}
-
-	// Check the last return value
-	lastResult := fn.Type.Results.List[len(fn.Type.Results.List)-1]
-	if ident, ok := lastResult.Type.(*ast.Ident); ok {
-		return ident.Name == "error"
-	}
-	return false
-}
-
 // isWorkflowCall checks if the call expression is a workflow-related call.
 func (p *goParser) isWorkflowCall(call *ast.CallExpr) bool {
 	switch fun := call.Fun.(type) {
