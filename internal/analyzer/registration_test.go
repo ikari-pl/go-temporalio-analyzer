@@ -2,6 +2,7 @@ package analyzer
 
 import (
 	"context"
+	"go/ast"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -331,34 +332,43 @@ func main() {
 	foundProcessPayment := false
 
 	for _, match := range matches {
-		switch match.NodeType {
-		case "workflow":
-			if match.Node != nil {
+		fn, ok := match.Node.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		switch fn.Name.Name {
+		case "MyWorkflow":
+			if match.NodeType == "workflow" {
 				foundWorkflow = true
 			}
-		case "activity":
-			foundSendEmail = true
-			foundProcessPayment = true
+		case "SendEmail":
+			if match.NodeType == "activity" {
+				foundSendEmail = true
+			}
+		case "ProcessPayment":
+			if match.NodeType == "activity" {
+				foundProcessPayment = true
+			}
 		}
 	}
 
 	if !foundWorkflow {
-		t.Error("Expected to find workflow")
+		t.Error("Expected to find workflow 'MyWorkflow'")
 	}
-
-	// Note: We found at least some activities via registration
-	if len(matches) < 2 {
-		t.Errorf("Expected at least 2 matches (workflow + activities), got %d", len(matches))
+	if !foundSendEmail {
+		t.Error("Expected to find activity 'SendEmail'")
+	}
+	if !foundProcessPayment {
+		t.Error("Expected to find activity 'ProcessPayment'")
 	}
 
 	// Log what we found for debugging
 	t.Logf("Found %d matches", len(matches))
 	for _, m := range matches {
-		t.Logf("  - %s: %s", m.NodeType, m.FilePath)
+		if fn, ok := m.Node.(*ast.FuncDecl); ok {
+			t.Logf("  - %s: %s", m.NodeType, fn.Name.Name)
+		}
 	}
-
-	_ = foundSendEmail
-	_ = foundProcessPayment
 }
 
 func TestIsRegisteredType(t *testing.T) {

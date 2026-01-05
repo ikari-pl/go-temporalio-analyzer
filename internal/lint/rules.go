@@ -656,8 +656,9 @@ func (r *ArgumentsMismatchRule) Check(ctx context.Context, graph *analyzer.Tempo
 				continue
 			}
 
-			// Check argument count mismatch
-			if callSite.ArgumentCount > 0 || len(callSite.ArgumentTypes) > 0 {
+			// Check argument count mismatch for activity/workflow calls
+			// Only check for call types where we extract argument info
+			if callSite.CallType == "activity" || callSite.CallType == "child_workflow" || callSite.CallType == "local_activity" {
 				expectedCount := countNonContextParams(targetNode.Parameters)
 
 				if callSite.ArgumentCount != expectedCount {

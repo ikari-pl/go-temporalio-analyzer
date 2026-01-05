@@ -551,7 +551,8 @@ func TestArgumentsMismatchRule(t *testing.T) {
 					{
 						TargetName:    "SendEmailActivity",
 						TargetType:    "activity",
-						ArgumentCount: 1, // Only passing 1 arg
+						CallType:      "activity", // Required for argument count check
+						ArgumentCount: 1,          // Only passing 1 arg
 						LineNumber:    10,
 						FilePath:      "workflow.go",
 					},
@@ -586,11 +587,11 @@ func TestArgumentsMismatchRule(t *testing.T) {
 		t.Errorf("Should not report issue for correct argument count, got %d", len(issues))
 	}
 
-	// Test with zero arguments (skip check)
+	// Test with zero arguments when some are expected - should report mismatch
 	graph.Nodes["MyWorkflow"].CallSites[0].ArgumentCount = 0
 	issues = rule.Check(ctx, graph)
-	if len(issues) != 0 {
-		t.Error("Should skip check when ArgumentCount is 0")
+	if len(issues) != 1 {
+		t.Errorf("Should report issue when 0 args passed but %d expected, got %d issues", 3, len(issues))
 	}
 
 	// Test return type mismatch

@@ -61,6 +61,7 @@ func (s *registrationScanner) ScanDirectory(ctx context.Context, rootDir string,
 
 	err := filepath.Walk(rootDir, func(path string, fileInfo os.FileInfo, err error) error {
 		if err != nil {
+			s.logger.Warn("Error accessing path during registration scan", "path", path, "error", err)
 			return nil // Continue walking
 		}
 

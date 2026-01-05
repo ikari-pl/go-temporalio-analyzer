@@ -729,44 +729,15 @@ func (e *callExtractor) extractTemporalTarget(call *ast.CallExpr) string {
 // extractTemporalTargetWithArgs extracts the target function name and argument info from a Temporal API call.
 // Returns: target name, argument count (excluding ctx and target func), argument types
 func (e *callExtractor) extractTemporalTargetWithArgs(call *ast.CallExpr) (string, int, []string) {
-	if len(call.Args) == 0 {
+	// In both patterns, the target is the second argument and activity/workflow args start at index 2:
+	// Pattern 1: ExecuteActivity(ctx, MyActivity, args...)
+	// Pattern 2: ExecuteActivity(workflow.WithActivityOptions(ctx, opts), MyActivity, args...)
+	if len(call.Args) < 2 {
 		return "", 0, nil
 	}
 
-	var targetArg ast.Expr
-	var argsStartIndex int // Index where actual arguments start (after ctx and target)
-
-	// Check if first argument is a call to workflow.WithActivityOptions
-	if len(call.Args) > 0 {
-		if firstCall, ok := call.Args[0].(*ast.CallExpr); ok {
-			if e.isWithOptionsCall(firstCall) {
-				// Pattern 2: WithOptions(ctx, opts), target, args...
-				// target is second argument, args start at index 2
-				if len(call.Args) > 1 {
-					targetArg = call.Args[1]
-					argsStartIndex = 2
-				}
-			} else {
-				// Pattern 1: ctx, target, args...
-				// target is second argument, args start at index 2
-				if len(call.Args) > 1 {
-					targetArg = call.Args[1]
-					argsStartIndex = 2
-				}
-			}
-		} else {
-			// Pattern 1: ctx, target, args...
-			// target is second argument, args start at index 2
-			if len(call.Args) > 1 {
-				targetArg = call.Args[1]
-				argsStartIndex = 2
-			}
-		}
-	}
-
-	if targetArg == nil {
-		return "", 0, nil
-	}
+	targetArg := call.Args[1]
+	argsStartIndex := 2
 
 	targetName := e.extractFunctionReference(targetArg)
 
