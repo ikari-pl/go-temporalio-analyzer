@@ -85,14 +85,25 @@ func TestLinterRun(t *testing.T) {
 }
 
 func TestLinterRunWithIssues(t *testing.T) {
-	// Create graph with an activity without retry policy
+	// Create graph with a workflow calling an activity without retry policy
 	graph := &analyzer.TemporalGraph{
 		Nodes: map[string]*analyzer.TemporalNode{
+			"TestWorkflow": {
+				Name:     "TestWorkflow",
+				Type:     "workflow",
+				FilePath: "test.go",
+				CallSites: []analyzer.CallSite{
+					{
+						TargetName:         "TestActivity",
+						CallType:           "activity",
+						ParsedActivityOpts: nil, // No activity options = will trigger TA001
+					},
+				},
+			},
 			"TestActivity": {
-				Name:         "TestActivity",
-				Type:         "activity",
-				FilePath:     "test.go",
-				ActivityOpts: nil, // No activity options = will trigger TA001
+				Name:     "TestActivity",
+				Type:     "activity",
+				FilePath: "test.go",
 			},
 		},
 	}
@@ -330,18 +341,26 @@ func TestResultSummary(t *testing.T) {
 }
 
 func TestLinterMaxIssues(t *testing.T) {
-	// Create a graph that will trigger many issues
-	nodes := make(map[string]*analyzer.TemporalNode)
+	// Create a graph with a workflow that calls many activities without retry policy
+	callSites := make([]analyzer.CallSite, 20)
 	for i := 0; i < 20; i++ {
-		name := "TestActivity" + string(rune('A'+i))
-		nodes[name] = &analyzer.TemporalNode{
-			Name:         name,
-			Type:         "activity",
-			FilePath:     "test.go",
-			ActivityOpts: nil, // Will trigger TA001
+		callSites[i] = analyzer.CallSite{
+			TargetName:         "TestActivity" + string(rune('A'+i)),
+			CallType:           "activity",
+			ParsedActivityOpts: nil, // Will trigger TA001
 		}
 	}
-	graph := &analyzer.TemporalGraph{Nodes: nodes}
+
+	graph := &analyzer.TemporalGraph{
+		Nodes: map[string]*analyzer.TemporalNode{
+			"TestWorkflow": {
+				Name:      "TestWorkflow",
+				Type:      "workflow",
+				FilePath:  "test.go",
+				CallSites: callSites,
+			},
+		},
+	}
 
 	cfg := DefaultConfig()
 	cfg.MaxIssues = 5
@@ -377,22 +396,38 @@ func TestLinterExitCode(t *testing.T) {
 }
 
 func TestLinterSortIssues(t *testing.T) {
-	// Create a graph that will produce multiple issues
+	// Create a graph with workflows calling activities that will produce multiple issues
 	graph := &analyzer.TemporalGraph{
 		Nodes: map[string]*analyzer.TemporalNode{
-			"ActivityB": {
-				Name:         "ActivityB",
-				Type:         "activity",
-				FilePath:     "b.go",
-				LineNumber:   20,
-				ActivityOpts: nil,
+			"WorkflowB": {
+				Name:       "WorkflowB",
+				Type:       "workflow",
+				FilePath:   "b.go",
+				LineNumber: 20,
+				CallSites: []analyzer.CallSite{
+					{
+						TargetName:         "ActivityB",
+						CallType:           "activity",
+						FilePath:           "b.go",
+						LineNumber:         25,
+						ParsedActivityOpts: nil, // Will trigger TA001
+					},
+				},
 			},
-			"ActivityA": {
-				Name:         "ActivityA",
-				Type:         "activity",
-				FilePath:     "a.go",
-				LineNumber:   10,
-				ActivityOpts: nil,
+			"WorkflowA": {
+				Name:       "WorkflowA",
+				Type:       "workflow",
+				FilePath:   "a.go",
+				LineNumber: 10,
+				CallSites: []analyzer.CallSite{
+					{
+						TargetName:         "ActivityA",
+						CallType:           "activity",
+						FilePath:           "a.go",
+						LineNumber:         15,
+						ParsedActivityOpts: nil, // Will trigger TA001
+					},
+				},
 			},
 		},
 	}

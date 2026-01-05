@@ -226,7 +226,7 @@ func TestSearchAttrDefStructure(t *testing.T) {
 func TestWorkflowOptionsStructure(t *testing.T) {
 	rp := &RetryPolicy{
 		InitialInterval:    "1s",
-		BackoffCoefficient: 2.0,
+		BackoffCoefficient: "2.0",
 		MaximumInterval:    "1m",
 		MaximumAttempts:    5,
 		NonRetryableErrors: []string{"PermanentError"},

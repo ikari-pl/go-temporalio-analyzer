@@ -45,25 +45,36 @@ func TestActivityWithoutRetryRule(t *testing.T) {
 		t.Errorf("Severity() = %v, want %v", rule.Severity(), SeverityWarning)
 	}
 
-	// Test with activity without retry
+	ctx := context.Background()
+
+	// Test with activity call without retry policy
 	graph := &analyzer.TemporalGraph{
 		Nodes: map[string]*analyzer.TemporalNode{
+			"TestWorkflow": {
+				Name: "TestWorkflow",
+				Type: "workflow",
+				CallSites: []analyzer.CallSite{
+					{
+						TargetName:         "TestActivity",
+						CallType:           "activity",
+						ParsedActivityOpts: nil, // No options = no retry policy
+					},
+				},
+			},
 			"TestActivity": {
-				Name:         "TestActivity",
-				Type:         "activity",
-				ActivityOpts: nil,
+				Name: "TestActivity",
+				Type: "activity",
 			},
 		},
 	}
 
-	ctx := context.Background()
 	issues := rule.Check(ctx, graph)
 	if len(issues) == 0 {
 		t.Error("Expected issue for activity without retry policy")
 	}
 
-	// Test with activity with retry
-	graph.Nodes["TestActivity"].ActivityOpts = &analyzer.ActivityOptions{
+	// Test with activity call with retry policy
+	graph.Nodes["TestWorkflow"].CallSites[0].ParsedActivityOpts = &analyzer.ActivityOptions{
 		RetryPolicy: &analyzer.RetryPolicy{MaximumAttempts: 3},
 	}
 	issues = rule.Check(ctx, graph)
@@ -82,25 +93,36 @@ func TestActivityWithoutTimeoutRule(t *testing.T) {
 		t.Errorf("Severity() = %v, want %v", rule.Severity(), SeverityError)
 	}
 
-	// Test with activity without timeout
+	ctx := context.Background()
+
+	// Test with activity call without timeout
 	graph := &analyzer.TemporalGraph{
 		Nodes: map[string]*analyzer.TemporalNode{
+			"TestWorkflow": {
+				Name: "TestWorkflow",
+				Type: "workflow",
+				CallSites: []analyzer.CallSite{
+					{
+						TargetName:         "TestActivity",
+						CallType:           "activity",
+						ParsedActivityOpts: &analyzer.ActivityOptions{}, // No timeout set
+					},
+				},
+			},
 			"TestActivity": {
-				Name:         "TestActivity",
-				Type:         "activity",
-				ActivityOpts: &analyzer.ActivityOptions{},
+				Name: "TestActivity",
+				Type: "activity",
 			},
 		},
 	}
 
-	ctx := context.Background()
 	issues := rule.Check(ctx, graph)
 	if len(issues) == 0 {
 		t.Error("Expected issue for activity without timeout")
 	}
 
-	// Test with activity with timeout
-	graph.Nodes["TestActivity"].ActivityOpts.StartToCloseTimeout = "5m"
+	// Test with activity call with timeout
+	graph.Nodes["TestWorkflow"].CallSites[0].ParsedActivityOpts.StartToCloseTimeout = "5m"
 	issues = rule.Check(ctx, graph)
 	if len(issues) != 0 {
 		t.Error("Should not report issue for activity with timeout")
@@ -114,25 +136,36 @@ func TestLongRunningActivityWithoutHeartbeatRule(t *testing.T) {
 		t.Errorf("ID() = %q, want %q", rule.ID(), "TA003")
 	}
 
-	// Test with long-running activity without heartbeat
+	ctx := context.Background()
+
+	// Test with long-running activity call without heartbeat
 	graph := &analyzer.TemporalGraph{
 		Nodes: map[string]*analyzer.TemporalNode{
+			"TestWorkflow": {
+				Name: "TestWorkflow",
+				Type: "workflow",
+				CallSites: []analyzer.CallSite{
+					{
+						TargetName:         "ProcessBatchActivity", // "batch" triggers long-running check
+						CallType:           "activity",
+						ParsedActivityOpts: &analyzer.ActivityOptions{}, // No heartbeat set
+					},
+				},
+			},
 			"ProcessBatchActivity": {
-				Name:         "ProcessBatchActivity",
-				Type:         "activity",
-				ActivityOpts: &analyzer.ActivityOptions{},
+				Name: "ProcessBatchActivity",
+				Type: "activity",
 			},
 		},
 	}
 
-	ctx := context.Background()
 	issues := rule.Check(ctx, graph)
 	if len(issues) == 0 {
 		t.Error("Expected issue for long-running activity without heartbeat")
 	}
 
 	// Test with heartbeat configured
-	graph.Nodes["ProcessBatchActivity"].ActivityOpts.HeartbeatTimeout = "30s"
+	graph.Nodes["TestWorkflow"].CallSites[0].ParsedActivityOpts.HeartbeatTimeout = "30s"
 	issues = rule.Check(ctx, graph)
 	if len(issues) != 0 {
 		t.Error("Should not report issue for activity with heartbeat")
@@ -149,30 +182,128 @@ func TestCircularDependencyRule(t *testing.T) {
 		t.Errorf("Severity() = %v, want %v", rule.Severity(), SeverityError)
 	}
 
-	// Test with circular dependency
-	graph := &analyzer.TemporalGraph{
-		Nodes: map[string]*analyzer.TemporalNode{
-			"A": {Name: "A", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "B"}}},
-			"B": {Name: "B", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "A"}}},
-		},
-	}
-
 	ctx := context.Background()
-	issues := rule.Check(ctx, graph)
-	if len(issues) == 0 {
-		t.Error("Expected issue for circular dependency")
-	}
 
-	// Test without circular dependency
-	graph = &analyzer.TemporalGraph{
-		Nodes: map[string]*analyzer.TemporalNode{
-			"A": {Name: "A", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "B"}}},
-			"B": {Name: "B", Type: "workflow"},
+	// Table-driven tests for circular dependency detection
+	testCases := []struct {
+		name         string
+		graph        *analyzer.TemporalGraph
+		expectIssues int
+		description  string
+	}{
+		{
+			name: "detects two-node cycle",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"A": {Name: "A", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "B"}}},
+					"B": {Name: "B", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "A"}}},
+				},
+			},
+			expectIssues: 1,
+			description:  "Expected issue for circular dependency A -> B -> A",
+		},
+		{
+			name: "no issue without cycle",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"A": {Name: "A", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "B"}}},
+					"B": {Name: "B", Type: "workflow"},
+				},
+			},
+			expectIssues: 0,
+			description:  "Should not report issue without circular dependency",
+		},
+		{
+			name: "ignores self-referential calls (recursion)",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"RecursiveWorkflow": {
+						Name:      "RecursiveWorkflow",
+						Type:      "workflow",
+						CallSites: []analyzer.CallSite{{TargetName: "RecursiveWorkflow"}},
+					},
+				},
+			},
+			expectIssues: 0,
+			description:  "Should NOT report self-referential call as circular dependency",
+		},
+		{
+			name: "detects three-node cycle",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"A": {Name: "A", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "B"}}},
+					"B": {Name: "B", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "C"}}},
+					"C": {Name: "C", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "A"}}},
+				},
+			},
+			expectIssues: 1,
+			description:  "Expected issue for circular dependency A -> B -> C -> A",
+		},
+		{
+			name: "reports real cycle but ignores self-reference in same node",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"A": {
+						Name: "A",
+						Type: "workflow",
+						CallSites: []analyzer.CallSite{
+							{TargetName: "A"}, // Self-reference (should be ignored)
+							{TargetName: "B"}, // Real dependency
+						},
+					},
+					"B": {Name: "B", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "A"}}},
+				},
+			},
+			expectIssues: 1,
+			description:  "Expected exactly 1 issue for A -> B -> A cycle (ignoring A -> A)",
+		},
+		{
+			name: "no issues with multiple self-referential nodes",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"RecursiveA": {
+						Name:      "RecursiveA",
+						Type:      "workflow",
+						CallSites: []analyzer.CallSite{{TargetName: "RecursiveA"}},
+					},
+					"RecursiveB": {
+						Name:      "RecursiveB",
+						Type:      "workflow",
+						CallSites: []analyzer.CallSite{{TargetName: "RecursiveB"}},
+					},
+					"RecursiveC": {
+						Name:      "RecursiveC",
+						Type:      "workflow",
+						CallSites: []analyzer.CallSite{{TargetName: "RecursiveC"}},
+					},
+				},
+			},
+			expectIssues: 0,
+			description:  "Should NOT report any issues for self-referential nodes",
+		},
+		{
+			name: "ignores qualified self-referential names",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"*AutoTaskResolver.GetTasksForFilingPeriod": {
+						Name:      "*AutoTaskResolver.GetTasksForFilingPeriod",
+						Type:      "workflow",
+						CallSites: []analyzer.CallSite{{TargetName: "*AutoTaskResolver.GetTasksForFilingPeriod"}},
+					},
+				},
+			},
+			expectIssues: 0,
+			description:  "Should NOT report self-referential qualified method as circular dependency",
 		},
 	}
-	issues = rule.Check(ctx, graph)
-	if len(issues) != 0 {
-		t.Error("Should not report issue without circular dependency")
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			issues := rule.Check(ctx, tc.graph)
+			if len(issues) != tc.expectIssues {
+				t.Errorf("%s: expected %d issues but got %d", tc.description, tc.expectIssues, len(issues))
+			}
+		})
 	}
 }
 

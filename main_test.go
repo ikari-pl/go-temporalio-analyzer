@@ -664,15 +664,27 @@ func TestRunLint(t *testing.T) {
 			},
 			graph: &analyzer.TemporalGraph{
 				Nodes: map[string]*analyzer.TemporalNode{
+					"TestWorkflow": {
+						Name:     "TestWorkflow",
+						Type:     "workflow",
+						FilePath: "test.go",
+						CallSites: []analyzer.CallSite{
+							{
+								TargetName:         "TestActivity",
+								CallType:           "activity",
+								ParsedActivityOpts: nil, // No retry policy triggers warning
+							},
+						},
+					},
 					"TestActivity": {
 						Name:     "TestActivity",
 						Type:     "activity",
 						FilePath: "test.go",
-						Parents:  []string{},
-						// Activity without retry policy triggers a warning
+						Parents:  []string{"TestWorkflow"},
 					},
 				},
 				Stats: analyzer.GraphStats{
+					TotalWorkflows:  1,
 					TotalActivities: 1,
 				},
 			},
