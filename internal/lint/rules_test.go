@@ -184,130 +184,127 @@ func TestCircularDependencyRule(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test with circular dependency (A -> B -> A)
-	t.Run("detects two-node cycle", func(t *testing.T) {
-		graph := &analyzer.TemporalGraph{
-			Nodes: map[string]*analyzer.TemporalNode{
-				"A": {Name: "A", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "B"}}},
-				"B": {Name: "B", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "A"}}},
-			},
-		}
-		issues := rule.Check(ctx, graph)
-		if len(issues) == 0 {
-			t.Error("Expected issue for circular dependency A -> B -> A")
-		}
-	})
-
-	// Test without circular dependency
-	t.Run("no issue without cycle", func(t *testing.T) {
-		graph := &analyzer.TemporalGraph{
-			Nodes: map[string]*analyzer.TemporalNode{
-				"A": {Name: "A", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "B"}}},
-				"B": {Name: "B", Type: "workflow"},
-			},
-		}
-		issues := rule.Check(ctx, graph)
-		if len(issues) != 0 {
-			t.Error("Should not report issue without circular dependency")
-		}
-	})
-
-	// Test self-referential call (recursion) - should NOT be reported as circular dependency
-	t.Run("ignores self-referential calls (recursion)", func(t *testing.T) {
-		graph := &analyzer.TemporalGraph{
-			Nodes: map[string]*analyzer.TemporalNode{
-				"RecursiveWorkflow": {
-					Name:      "RecursiveWorkflow",
-					Type:      "workflow",
-					CallSites: []analyzer.CallSite{{TargetName: "RecursiveWorkflow"}},
+	// Table-driven tests for circular dependency detection
+	testCases := []struct {
+		name         string
+		graph        *analyzer.TemporalGraph
+		expectIssues int
+		description  string
+	}{
+		{
+			name: "detects two-node cycle",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"A": {Name: "A", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "B"}}},
+					"B": {Name: "B", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "A"}}},
 				},
 			},
-		}
-		issues := rule.Check(ctx, graph)
-		if len(issues) != 0 {
-			t.Errorf("Should NOT report self-referential call as circular dependency, got %d issues", len(issues))
-		}
-	})
-
-	// Test three-node cycle (A -> B -> C -> A)
-	t.Run("detects three-node cycle", func(t *testing.T) {
-		graph := &analyzer.TemporalGraph{
-			Nodes: map[string]*analyzer.TemporalNode{
-				"A": {Name: "A", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "B"}}},
-				"B": {Name: "B", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "C"}}},
-				"C": {Name: "C", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "A"}}},
+			expectIssues: 1,
+			description:  "Expected issue for circular dependency A -> B -> A",
+		},
+		{
+			name: "no issue without cycle",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"A": {Name: "A", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "B"}}},
+					"B": {Name: "B", Type: "workflow"},
+				},
 			},
-		}
-		issues := rule.Check(ctx, graph)
-		if len(issues) == 0 {
-			t.Error("Expected issue for circular dependency A -> B -> C -> A")
-		}
-	})
-
-	// Test node with both self-reference and real cycle
-	t.Run("reports real cycle but ignores self-reference in same node", func(t *testing.T) {
-		graph := &analyzer.TemporalGraph{
-			Nodes: map[string]*analyzer.TemporalNode{
-				"A": {
-					Name: "A",
-					Type: "workflow",
-					CallSites: []analyzer.CallSite{
-						{TargetName: "A"}, // Self-reference (should be ignored)
-						{TargetName: "B"}, // Real dependency
+			expectIssues: 0,
+			description:  "Should not report issue without circular dependency",
+		},
+		{
+			name: "ignores self-referential calls (recursion)",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"RecursiveWorkflow": {
+						Name:      "RecursiveWorkflow",
+						Type:      "workflow",
+						CallSites: []analyzer.CallSite{{TargetName: "RecursiveWorkflow"}},
 					},
 				},
-				"B": {Name: "B", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "A"}}},
 			},
-		}
-		issues := rule.Check(ctx, graph)
-		if len(issues) != 1 {
-			t.Errorf("Expected exactly 1 issue for A -> B -> A cycle (ignoring A -> A), got %d", len(issues))
-		}
-	})
+			expectIssues: 0,
+			description:  "Should NOT report self-referential call as circular dependency",
+		},
+		{
+			name: "detects three-node cycle",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"A": {Name: "A", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "B"}}},
+					"B": {Name: "B", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "C"}}},
+					"C": {Name: "C", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "A"}}},
+				},
+			},
+			expectIssues: 1,
+			description:  "Expected issue for circular dependency A -> B -> C -> A",
+		},
+		{
+			name: "reports real cycle but ignores self-reference in same node",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"A": {
+						Name: "A",
+						Type: "workflow",
+						CallSites: []analyzer.CallSite{
+							{TargetName: "A"}, // Self-reference (should be ignored)
+							{TargetName: "B"}, // Real dependency
+						},
+					},
+					"B": {Name: "B", Type: "workflow", CallSites: []analyzer.CallSite{{TargetName: "A"}}},
+				},
+			},
+			expectIssues: 1,
+			description:  "Expected exactly 1 issue for A -> B -> A cycle (ignoring A -> A)",
+		},
+		{
+			name: "no issues with multiple self-referential nodes",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"RecursiveA": {
+						Name:      "RecursiveA",
+						Type:      "workflow",
+						CallSites: []analyzer.CallSite{{TargetName: "RecursiveA"}},
+					},
+					"RecursiveB": {
+						Name:      "RecursiveB",
+						Type:      "workflow",
+						CallSites: []analyzer.CallSite{{TargetName: "RecursiveB"}},
+					},
+					"RecursiveC": {
+						Name:      "RecursiveC",
+						Type:      "workflow",
+						CallSites: []analyzer.CallSite{{TargetName: "RecursiveC"}},
+					},
+				},
+			},
+			expectIssues: 0,
+			description:  "Should NOT report any issues for self-referential nodes",
+		},
+		{
+			name: "ignores qualified self-referential names",
+			graph: &analyzer.TemporalGraph{
+				Nodes: map[string]*analyzer.TemporalNode{
+					"*AutoTaskResolver.GetTasksForFilingPeriod": {
+						Name:      "*AutoTaskResolver.GetTasksForFilingPeriod",
+						Type:      "workflow",
+						CallSites: []analyzer.CallSite{{TargetName: "*AutoTaskResolver.GetTasksForFilingPeriod"}},
+					},
+				},
+			},
+			expectIssues: 0,
+			description:  "Should NOT report self-referential qualified method as circular dependency",
+		},
+	}
 
-	// Test multiple nodes with self-references only - no cycles should be reported
-	t.Run("no issues with multiple self-referential nodes", func(t *testing.T) {
-		graph := &analyzer.TemporalGraph{
-			Nodes: map[string]*analyzer.TemporalNode{
-				"RecursiveA": {
-					Name:      "RecursiveA",
-					Type:      "workflow",
-					CallSites: []analyzer.CallSite{{TargetName: "RecursiveA"}},
-				},
-				"RecursiveB": {
-					Name:      "RecursiveB",
-					Type:      "workflow",
-					CallSites: []analyzer.CallSite{{TargetName: "RecursiveB"}},
-				},
-				"RecursiveC": {
-					Name:      "RecursiveC",
-					Type:      "workflow",
-					CallSites: []analyzer.CallSite{{TargetName: "RecursiveC"}},
-				},
-			},
-		}
-		issues := rule.Check(ctx, graph)
-		if len(issues) != 0 {
-			t.Errorf("Should NOT report any issues for self-referential nodes, got %d issues", len(issues))
-		}
-	})
-
-	// Test real-world pattern: qualified method names with self-reference
-	t.Run("ignores qualified self-referential names", func(t *testing.T) {
-		graph := &analyzer.TemporalGraph{
-			Nodes: map[string]*analyzer.TemporalNode{
-				"*AutoTaskResolver.GetTasksForFilingPeriod": {
-					Name:      "*AutoTaskResolver.GetTasksForFilingPeriod",
-					Type:      "workflow",
-					CallSites: []analyzer.CallSite{{TargetName: "*AutoTaskResolver.GetTasksForFilingPeriod"}},
-				},
-			},
-		}
-		issues := rule.Check(ctx, graph)
-		if len(issues) != 0 {
-			t.Errorf("Should NOT report self-referential qualified method as circular dependency, got %d issues", len(issues))
-		}
-	})
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			issues := rule.Check(ctx, tc.graph)
+			if len(issues) != tc.expectIssues {
+				t.Errorf("%s: expected %d issues but got %d", tc.description, tc.expectIssues, len(issues))
+			}
+		})
+	}
 }
 
 func TestOrphanNodeRule(t *testing.T) {
