@@ -223,6 +223,7 @@ jobs:
 | TA031 | signal-without-handler | warning | Unhandled signals are silently dropped—a hidden failure mode | |
 | TA032 | query-without-return | info | Queries that return nothing defeat their inspection purpose | |
 | TA033 | continue-as-new-risk | info | Without termination conditions, workflows run forever | |
+| TA040 | arguments-mismatch | error | Wrong argument count/types cause runtime deserialization failures | |
 
 ✅ = insertable code fix, 📝 = code template
 
@@ -344,13 +345,24 @@ The stats dashboard shows:
 
 ## 🔬 Detection Patterns
 
-The analyzer recognizes these Temporal patterns:
+The analyzer uses multiple detection methods:
 
+### Registration-Based Detection (Most Accurate)
+Functions explicitly registered with Temporal workers are detected with high confidence:
 ```go
-// Workflows (detected by name or context type)
+worker.RegisterWorkflow(MyWorkflow)
+worker.RegisterActivity(MyActivity)
+worker.RegisterWorkflowWithOptions(MyWorkflow, workflow.RegisterOptions{...})
+worker.RegisterActivityWithOptions(MyActivity, activity.RegisterOptions{...})
+```
+
+### Signature-Based Detection
+Functions are also detected by their signatures:
+```go
+// Workflows (detected by workflow.Context parameter)
 func SomeWorkflow(ctx workflow.Context, ...) (Result, error)
 
-// Activities (detected by name or context type)
+// Activities (detected by context.Context + naming patterns)
 func SomeActivity(ctx context.Context, ...) (Result, error)
 
 // Signal Handlers
@@ -376,6 +388,33 @@ workflow.ExecuteChildWorkflow(ctx, ChildWorkflow, args)
 // Activities
 workflow.ExecuteActivity(ctx, SomeActivity, args)
 workflow.ExecuteLocalActivity(ctx, LocalActivity, args)
+```
+
+### Activity Options Analysis
+The linter parses activity options to detect missing retry policies and timeouts:
+```go
+// Detected: activity options with retry policy
+ao := workflow.ActivityOptions{
+    StartToCloseTimeout: 10 * time.Minute,
+    RetryPolicy: &temporal.RetryPolicy{
+        MaximumAttempts: 3,
+    },
+}
+ctx = workflow.WithActivityOptions(ctx, ao)
+
+// Also detected: inline options
+ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+    StartToCloseTimeout: 5 * time.Minute,
+})
+```
+
+### Argument Validation
+The analyzer validates that activity/workflow calls match their function signatures:
+```go
+// Activity definition: func MyActivity(ctx context.Context, userID string, count int) error
+
+// TA040 will flag this call - wrong argument count
+workflow.ExecuteActivity(ctx, MyActivity, userID)  // Missing 'count' argument
 ```
 
 ## 🏗️ Architecture
