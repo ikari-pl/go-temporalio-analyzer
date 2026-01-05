@@ -50,6 +50,8 @@ func (e *callExtractor) ExtractCalls(ctx context.Context, fn *ast.FuncDecl, file
 	}
 
 	var callSites []CallSite
+	// Track processed inner calls to avoid duplicates when handling chained .Get() calls
+	processedCalls := make(map[*ast.CallExpr]bool)
 
 	// Walk through the function body to find calls
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -63,6 +65,19 @@ func (e *callExtractor) ExtractCalls(ctx context.Context, fn *ast.FuncDecl, file
 		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
+		}
+
+		// Skip if already processed (inner call of a chained .Get())
+		if processedCalls[call] {
+			return true
+		}
+
+		// Check if this is a .Get() call with a Temporal call as receiver
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+			if innerCall, isCall := sel.X.(*ast.CallExpr); isCall && sel.Sel.Name == "Get" {
+				// Mark inner call as processed to avoid duplicate
+				processedCalls[innerCall] = true
+			}
 		}
 
 		info := e.analyzeCall(call, filePath, nil)

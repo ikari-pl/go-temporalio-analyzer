@@ -360,3 +360,91 @@ func main() {
 	_ = foundSendEmail
 	_ = foundProcessPayment
 }
+
+func TestIsRegisteredType(t *testing.T) {
+	info := &RegistrationInfo{
+		Activities:      make(map[string]*Registration),
+		Workflows:       make(map[string]*Registration),
+		RegisteredTypes: make(map[string]string),
+	}
+
+	// Add some registered types
+	info.RegisteredTypes["MyActivities"] = "activity"
+	info.RegisteredTypes["MyWorkflows"] = "workflow"
+
+	// Test activity type
+	regType, ok := info.IsRegisteredType("MyActivities")
+	if !ok {
+		t.Error("Expected MyActivities to be registered")
+	}
+	if regType != "activity" {
+		t.Errorf("Expected type 'activity', got %q", regType)
+	}
+
+	// Test workflow type
+	regType, ok = info.IsRegisteredType("MyWorkflows")
+	if !ok {
+		t.Error("Expected MyWorkflows to be registered")
+	}
+	if regType != "workflow" {
+		t.Errorf("Expected type 'workflow', got %q", regType)
+	}
+
+	// Test unregistered type
+	_, ok = info.IsRegisteredType("UnknownType")
+	if ok {
+		t.Error("Expected UnknownType to not be registered")
+	}
+}
+
+func TestHandlePointerArgEdgeCases(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Test various pointer argument patterns
+	content := `package main
+
+import "go.temporal.io/sdk/worker"
+
+type Activities struct{}
+func (a *Activities) DoWork() error { return nil }
+
+type Workflows struct{}
+func (w *Workflows) Run() error { return nil }
+
+func main() {
+	// new() pattern
+	worker.RegisterActivity(new(Activities))
+
+	// Composite literal with & in variable
+	activities := &Activities{}
+	worker.RegisterActivity(activities)
+
+	// Direct &Type{} pattern
+	worker.RegisterWorkflow(&Workflows{})
+}
+`
+	file := filepath.Join(tmpDir, "main.go")
+	if err := os.WriteFile(file, []byte(content), 0644); err != nil {
+		t.Fatalf("Failed to create test file: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	scanner := NewRegistrationScanner(logger)
+
+	ctx := context.Background()
+	opts := config.AnalysisOptions{RootDir: tmpDir}
+	info, err := scanner.ScanDirectory(ctx, tmpDir, opts)
+	if err != nil {
+		t.Fatalf("ScanDirectory failed: %v", err)
+	}
+
+	// Check that Activities was registered via new()
+	if _, ok := info.RegisteredTypes["Activities"]; !ok {
+		t.Error("Expected Activities to be registered via new()")
+	}
+
+	// Check that Workflows was registered via &Type{}
+	if _, ok := info.RegisteredTypes["Workflows"]; !ok {
+		t.Error("Expected Workflows to be registered via &Type{}")
+	}
+}
