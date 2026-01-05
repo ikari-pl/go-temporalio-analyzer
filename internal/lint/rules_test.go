@@ -527,3 +527,123 @@ func TestIssueFields(t *testing.T) {
 	}
 }
 
+func TestArgumentCountMismatchRule(t *testing.T) {
+	rule := &ArgumentCountMismatchRule{}
+
+	if rule.ID() != "TA040" {
+		t.Errorf("ID() = %q, want %q", rule.ID(), "TA040")
+	}
+	if rule.Name() != "argument-count-mismatch" {
+		t.Errorf("Name() = %q, want %q", rule.Name(), "argument-count-mismatch")
+	}
+	if rule.Severity() != SeverityError {
+		t.Errorf("Severity() = %v, want %v", rule.Severity(), SeverityError)
+	}
+
+	// Test with wrong argument count
+	graph := &analyzer.TemporalGraph{
+		Nodes: map[string]*analyzer.TemporalNode{
+			"MyWorkflow": {
+				Name: "MyWorkflow",
+				Type: "workflow",
+				CallSites: []analyzer.CallSite{
+					{
+						TargetName:    "SendEmailActivity",
+						TargetType:    "activity",
+						ArgumentCount: 1, // Only passing 1 arg
+						LineNumber:    10,
+						FilePath:      "workflow.go",
+					},
+				},
+			},
+			"SendEmailActivity": {
+				Name: "SendEmailActivity",
+				Type: "activity",
+				Parameters: map[string]string{
+					"ctx":     "context.Context",
+					"to":      "string",
+					"subject": "string",
+					"body":    "string",
+				}, // Expects 3 args (excluding ctx)
+			},
+		},
+	}
+
+	ctx := context.Background()
+	issues := rule.Check(ctx, graph)
+	if len(issues) != 1 {
+		t.Errorf("Expected 1 issue for argument count mismatch, got %d", len(issues))
+	}
+	if len(issues) > 0 && issues[0].RuleID != "TA040" {
+		t.Errorf("Issue RuleID = %q, want %q", issues[0].RuleID, "TA040")
+	}
+
+	// Test with correct argument count
+	graph.Nodes["MyWorkflow"].CallSites[0].ArgumentCount = 3 // Correct: to, subject, body
+	issues = rule.Check(ctx, graph)
+	if len(issues) != 0 {
+		t.Errorf("Should not report issue for correct argument count, got %d", len(issues))
+	}
+
+	// Test with zero arguments (skip check)
+	graph.Nodes["MyWorkflow"].CallSites[0].ArgumentCount = 0
+	issues = rule.Check(ctx, graph)
+	if len(issues) != 0 {
+		t.Error("Should skip check when ArgumentCount is 0")
+	}
+}
+
+func TestCountNonContextParams(t *testing.T) {
+	tests := []struct {
+		name   string
+		params map[string]string
+		want   int
+	}{
+		{
+			name:   "empty params",
+			params: map[string]string{},
+			want:   0,
+		},
+		{
+			name: "only context",
+			params: map[string]string{
+				"ctx": "context.Context",
+			},
+			want: 0,
+		},
+		{
+			name: "workflow context only",
+			params: map[string]string{
+				"ctx": "workflow.Context",
+			},
+			want: 0,
+		},
+		{
+			name: "context plus params",
+			params: map[string]string{
+				"ctx":    "context.Context",
+				"input":  "string",
+				"count":  "int",
+			},
+			want: 2,
+		},
+		{
+			name: "no context",
+			params: map[string]string{
+				"input": "string",
+				"count": "int",
+			},
+			want: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := countNonContextParams(tt.params)
+			if got != tt.want {
+				t.Errorf("countNonContextParams() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+

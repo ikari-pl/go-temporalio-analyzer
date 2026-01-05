@@ -126,6 +126,9 @@ func (l *Linter) registerRules() {
 	l.rules = append(l.rules, NewWorkflowWithoutVersioningRule(l.config.Thresholds.VersioningRequired))
 	l.rules = append(l.rules, &QueryWithoutReturnRule{})
 	l.rules = append(l.rules, &ContinueAsNewWithoutConditionRule{})
+
+	// Type Safety Rules
+	l.rules = append(l.rules, &ArgumentCountMismatchRule{})
 }
 
 // isRuleEnabled checks if a rule should be executed.

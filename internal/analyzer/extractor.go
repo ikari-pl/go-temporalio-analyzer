@@ -36,6 +36,11 @@ type TemporalCallInfo struct {
 	TimerDef      *TimerDef
 	VersionDef    *VersionDef
 	SearchAttrDef *SearchAttrDef
+
+	// Signature validation
+	ArgumentCount int      // Number of arguments passed (excluding ctx and activity/workflow func)
+	ArgumentTypes []string // Types of arguments if determinable
+	ResultType    string   // Type used in .Get() call if present
 }
 
 // ExtractCalls finds all temporal workflow and activity calls within a function.
@@ -63,12 +68,15 @@ func (e *callExtractor) ExtractCalls(ctx context.Context, fn *ast.FuncDecl, file
 		info := e.analyzeCall(call, filePath, nil)
 		if info != nil && info.TargetName != "" {
 			callSites = append(callSites, CallSite{
-				TargetName: info.TargetName,
-				TargetType: info.Type,
-				CallType:   info.Type,
-				LineNumber: info.LineNumber,
-				FilePath:   info.FilePath,
-				Options:    info.Options,
+				TargetName:    info.TargetName,
+				TargetType:    info.Type,
+				CallType:      info.Type,
+				LineNumber:    info.LineNumber,
+				FilePath:      info.FilePath,
+				Options:       info.Options,
+				ArgumentCount: info.ArgumentCount,
+				ArgumentTypes: info.ArgumentTypes,
+				ResultType:    info.ResultType,
 			})
 		}
 
@@ -140,12 +148,15 @@ func (e *callExtractor) ExtractAllTemporalInfo(ctx context.Context, fn *ast.Func
 		case "activity", "child_workflow", "local_activity":
 			if info.TargetName != "" {
 				details.CallSites = append(details.CallSites, CallSite{
-					TargetName: info.TargetName,
-					TargetType: info.Type,
-					CallType:   "execute",
-					LineNumber: info.LineNumber,
-					FilePath:   info.FilePath,
-					Options:    info.Options,
+					TargetName:    info.TargetName,
+					TargetType:    info.Type,
+					CallType:      "execute",
+					LineNumber:    info.LineNumber,
+					FilePath:      info.FilePath,
+					Options:       info.Options,
+					ArgumentCount: info.ArgumentCount,
+					ArgumentTypes: info.ArgumentTypes,
+					ResultType:    info.ResultType,
 				})
 			}
 		}
@@ -357,33 +368,39 @@ func (e *callExtractor) isBoringCall(receiver, method string) bool {
 func (e *callExtractor) analyzeWorkflowCall(method string, call *ast.CallExpr, filePath string, lineNum int) *TemporalCallInfo {
 	switch method {
 	case "ExecuteActivity":
-		target := e.extractTemporalTarget(call)
+		target, argCount, argTypes := e.extractTemporalTargetWithArgs(call)
 		return &TemporalCallInfo{
-			Type:       "activity",
-			TargetName: target,
-			LineNumber: lineNum,
-			FilePath:   filepath.Base(filePath),
-			Options:    e.extractOptions(call),
+			Type:          "activity",
+			TargetName:    target,
+			LineNumber:    lineNum,
+			FilePath:      filepath.Base(filePath),
+			Options:       e.extractOptions(call),
+			ArgumentCount: argCount,
+			ArgumentTypes: argTypes,
 		}
 
 	case "ExecuteChildWorkflow":
-		target := e.extractTemporalTarget(call)
+		target, argCount, argTypes := e.extractTemporalTargetWithArgs(call)
 		return &TemporalCallInfo{
-			Type:       "child_workflow",
-			TargetName: target,
-			LineNumber: lineNum,
-			FilePath:   filepath.Base(filePath),
-			Options:    e.extractOptions(call),
+			Type:          "child_workflow",
+			TargetName:    target,
+			LineNumber:    lineNum,
+			FilePath:      filepath.Base(filePath),
+			Options:       e.extractOptions(call),
+			ArgumentCount: argCount,
+			ArgumentTypes: argTypes,
 		}
 
 	case "ExecuteLocalActivity":
-		target := e.extractTemporalTarget(call)
+		target, argCount, argTypes := e.extractTemporalTargetWithArgs(call)
 		return &TemporalCallInfo{
-			Type:       "local_activity",
-			TargetName: target,
-			LineNumber: lineNum,
-			FilePath:   filepath.Base(filePath),
-			Options:    e.extractOptions(call),
+			Type:          "local_activity",
+			TargetName:    target,
+			LineNumber:    lineNum,
+			FilePath:      filepath.Base(filePath),
+			Options:       e.extractOptions(call),
+			ArgumentCount: argCount,
+			ArgumentTypes: argTypes,
 		}
 
 	case "SetSignalHandler":
@@ -674,39 +691,115 @@ func (e *callExtractor) ExtractParameters(fn *ast.FuncDecl) map[string]string {
 
 // extractTemporalTarget extracts the target function name from a Temporal API call.
 func (e *callExtractor) extractTemporalTarget(call *ast.CallExpr) string {
+	target, _, _ := e.extractTemporalTargetWithArgs(call)
+	return target
+}
+
+// extractTemporalTargetWithArgs extracts the target function name and argument info from a Temporal API call.
+// Returns: target name, argument count (excluding ctx and target func), argument types
+func (e *callExtractor) extractTemporalTargetWithArgs(call *ast.CallExpr) (string, int, []string) {
 	if len(call.Args) == 0 {
-		return ""
+		return "", 0, nil
 	}
 
 	var targetArg ast.Expr
+	var argsStartIndex int // Index where actual arguments start (after ctx and target)
 
 	// Check if first argument is a call to workflow.WithActivityOptions
 	if len(call.Args) > 0 {
 		if firstCall, ok := call.Args[0].(*ast.CallExpr); ok {
 			if e.isWithOptionsCall(firstCall) {
-				// Pattern 2: target is second argument
+				// Pattern 2: WithOptions(ctx, opts), target, args...
+				// target is second argument, args start at index 2
 				if len(call.Args) > 1 {
 					targetArg = call.Args[1]
+					argsStartIndex = 2
 				}
 			} else {
-				// Pattern 1: target is second argument (first is context)
+				// Pattern 1: ctx, target, args...
+				// target is second argument, args start at index 2
 				if len(call.Args) > 1 {
 					targetArg = call.Args[1]
+					argsStartIndex = 2
 				}
 			}
 		} else {
-			// Pattern 1: target is second argument (first is context)
+			// Pattern 1: ctx, target, args...
+			// target is second argument, args start at index 2
 			if len(call.Args) > 1 {
 				targetArg = call.Args[1]
+				argsStartIndex = 2
 			}
 		}
 	}
 
 	if targetArg == nil {
-		return ""
+		return "", 0, nil
 	}
 
-	return e.extractFunctionReference(targetArg)
+	targetName := e.extractFunctionReference(targetArg)
+
+	// Count and extract types of remaining arguments
+	argCount := 0
+	var argTypes []string
+
+	if argsStartIndex < len(call.Args) {
+		argCount = len(call.Args) - argsStartIndex
+		for i := argsStartIndex; i < len(call.Args); i++ {
+			argType := e.inferExprType(call.Args[i])
+			argTypes = append(argTypes, argType)
+		}
+	}
+
+	return targetName, argCount, argTypes
+}
+
+// inferExprType attempts to infer the type of an expression.
+// Returns a type hint or "unknown" if type cannot be determined.
+func (e *callExtractor) inferExprType(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.BasicLit:
+		// Literal values have obvious types
+		switch t.Kind.String() {
+		case "INT":
+			return "int"
+		case "FLOAT":
+			return "float64"
+		case "STRING":
+			return "string"
+		case "CHAR":
+			return "rune"
+		}
+	case *ast.Ident:
+		// Could be a variable or constant
+		// Check for common type names used as values
+		switch t.Name {
+		case "true", "false":
+			return "bool"
+		case "nil":
+			return "nil"
+		}
+		return "var:" + t.Name // Variable, type unknown
+	case *ast.SelectorExpr:
+		// pkg.Const or obj.Field
+		return "selector:" + e.exprToString(t)
+	case *ast.UnaryExpr:
+		// &x, *x, etc
+		if t.Op.String() == "&" {
+			innerType := e.inferExprType(t.X)
+			return "*" + innerType
+		}
+		return e.inferExprType(t.X)
+	case *ast.CompositeLit:
+		// Type{...} literal
+		if t.Type != nil {
+			return e.typeToString(t.Type)
+		}
+	case *ast.CallExpr:
+		// Function call result - type depends on function
+		return "call:" + e.exprToString(t.Fun)
+	}
+	return "unknown"
 }
 
 // isWithOptionsCall checks if a call is workflow.WithActivityOptions or similar.
@@ -844,12 +937,15 @@ func (e *callExtractor) ExtractCallsWithFileSet(ctx context.Context, fn *ast.Fun
 		info := e.analyzeCall(call, filePath, fset)
 		if info != nil && info.TargetName != "" {
 			callSites = append(callSites, CallSite{
-				TargetName: info.TargetName,
-				TargetType: info.Type,
-				CallType:   info.Type,
-				LineNumber: info.LineNumber,
-				FilePath:   info.FilePath,
-				Options:    info.Options,
+				TargetName:    info.TargetName,
+				TargetType:    info.Type,
+				CallType:      info.Type,
+				LineNumber:    info.LineNumber,
+				FilePath:      info.FilePath,
+				Options:       info.Options,
+				ArgumentCount: info.ArgumentCount,
+				ArgumentTypes: info.ArgumentTypes,
+				ResultType:    info.ResultType,
 			})
 		}
 

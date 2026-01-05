@@ -630,6 +630,82 @@ func (r *ContinueAsNewWithoutConditionRule) Check(ctx context.Context, graph *an
 }
 
 // =============================================================================
+// Type Safety Rules
+// =============================================================================
+
+// ArgumentCountMismatchRule checks for activities/workflows called with wrong number of arguments.
+type ArgumentCountMismatchRule struct{}
+
+func (r *ArgumentCountMismatchRule) ID() string         { return "TA040" }
+func (r *ArgumentCountMismatchRule) Name() string       { return "argument-count-mismatch" }
+func (r *ArgumentCountMismatchRule) Category() Category { return CategoryReliability }
+func (r *ArgumentCountMismatchRule) Severity() Severity { return SeverityError }
+func (r *ArgumentCountMismatchRule) Description() string {
+	return "Calling an activity or workflow with the wrong number of arguments will cause a runtime error. Temporal deserializes arguments by position, so mismatches cause failures that are hard to debug."
+}
+
+func (r *ArgumentCountMismatchRule) Check(ctx context.Context, graph *analyzer.TemporalGraph) []Issue {
+	var issues []Issue
+
+	for _, node := range graph.Nodes {
+		// Check each call site
+		for _, callSite := range node.CallSites {
+			// Skip if no argument count was captured
+			if callSite.ArgumentCount == 0 && len(callSite.ArgumentTypes) == 0 {
+				continue
+			}
+
+			// Find the target node
+			targetNode, exists := graph.Nodes[callSite.TargetName]
+			if !exists {
+				continue
+			}
+
+			// Count expected parameters (excluding context)
+			expectedCount := countNonContextParams(targetNode.Parameters)
+
+			if callSite.ArgumentCount != expectedCount {
+				issues = append(issues, Issue{
+					RuleID:   r.ID(),
+					RuleName: r.Name(),
+					Severity: r.Severity(),
+					Category: r.Category(),
+					Message: fmt.Sprintf(
+						"Call to '%s' passes %d argument(s), but %s '%s' expects %d",
+						callSite.TargetName,
+						callSite.ArgumentCount,
+						targetNode.Type,
+						targetNode.Name,
+						expectedCount,
+					),
+					Description: r.Description(),
+					Suggestion:  fmt.Sprintf("Update the call to pass exactly %d argument(s) matching the %s signature", expectedCount, targetNode.Type),
+					FilePath:    callSite.FilePath,
+					LineNumber:  callSite.LineNumber,
+					NodeName:    node.Name,
+					NodeType:    node.Type,
+				})
+			}
+		}
+	}
+
+	return issues
+}
+
+// countNonContextParams counts parameters that aren't context.Context or workflow.Context.
+func countNonContextParams(params map[string]string) int {
+	count := 0
+	for _, paramType := range params {
+		// Skip context parameters
+		if paramType == "context.Context" || paramType == "workflow.Context" {
+			continue
+		}
+		count++
+	}
+	return count
+}
+
+// =============================================================================
 // Helper Functions
 // =============================================================================
 
