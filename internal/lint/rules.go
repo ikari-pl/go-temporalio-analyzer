@@ -115,29 +115,47 @@ func (r *ActivityWithoutRetryRule) Description() string {
 
 func (r *ActivityWithoutRetryRule) Check(ctx context.Context, graph *analyzer.TemporalGraph) []Issue {
 	var issues []Issue
+
+	// Check activity calls in workflows for missing retry policies.
+	// Retry policies are configured at the call site (via WithActivityOptions),
+	// not on the activity definition itself.
 	for _, node := range graph.Nodes {
-		if node.Type != "activity" {
+		// Only check workflow nodes for their activity call sites
+		if node.Type != "workflow" {
 			continue
 		}
-		if node.ActivityOpts == nil || node.ActivityOpts.RetryPolicy == nil {
-			issues = append(issues, Issue{
-				RuleID:      r.ID(),
-				RuleName:    r.Name(),
-				Severity:    r.Severity(),
-				Category:    r.Category(),
-				Message:     fmt.Sprintf("Activity '%s' has no retry policy configured", node.Name),
-				Description: r.Description(),
-				Suggestion:  "Add a RetryPolicy to activity options for transient failure resilience",
-				FilePath:    node.FilePath,
-				LineNumber:  node.LineNumber,
-				NodeName:    node.Name,
-				NodeType:    node.Type,
-				Fix: &CodeFix{
-					Description: "Add retry policy to activity options",
-					Replacements: []Replacement{{
-						FilePath:  node.FilePath,
-						StartLine: node.LineNumber,
-						NewText: `ao := workflow.ActivityOptions{
+
+		for _, callSite := range node.CallSites {
+			// Only check activity and local_activity calls
+			if callSite.CallType != "activity" && callSite.CallType != "local_activity" {
+				continue
+			}
+
+			// Check if retry policy is configured at this call site
+			hasRetryPolicy := false
+			if callSite.ParsedActivityOpts != nil {
+				hasRetryPolicy = callSite.ParsedActivityOpts.HasRetryPolicy()
+			}
+
+			if !hasRetryPolicy {
+				issues = append(issues, Issue{
+					RuleID:      r.ID(),
+					RuleName:    r.Name(),
+					Severity:    r.Severity(),
+					Category:    r.Category(),
+					Message:     fmt.Sprintf("Activity '%s' has no retry policy configured", callSite.TargetName),
+					Description: r.Description(),
+					Suggestion:  "Add a RetryPolicy to activity options for transient failure resilience",
+					FilePath:    callSite.FilePath,
+					LineNumber:  callSite.LineNumber,
+					NodeName:    callSite.TargetName,
+					NodeType:    callSite.CallType,
+					Fix: &CodeFix{
+						Description: "Add retry policy to activity options",
+						Replacements: []Replacement{{
+							FilePath:  callSite.FilePath,
+							StartLine: callSite.LineNumber,
+							NewText: `ao := workflow.ActivityOptions{
 	StartToCloseTimeout: 10 * time.Minute,
 	RetryPolicy: &temporal.RetryPolicy{
 		InitialInterval:    time.Second,
@@ -147,9 +165,10 @@ func (r *ActivityWithoutRetryRule) Check(ctx context.Context, graph *analyzer.Te
 	},
 }
 ctx = workflow.WithActivityOptions(ctx, ao)`,
-					}},
-				},
-			})
+						}},
+					},
+				})
+			}
 		}
 	}
 	return issues
@@ -168,42 +187,54 @@ func (r *ActivityWithoutTimeoutRule) Description() string {
 
 func (r *ActivityWithoutTimeoutRule) Check(ctx context.Context, graph *analyzer.TemporalGraph) []Issue {
 	var issues []Issue
+
+	// Check activity calls in workflows for missing timeouts.
+	// Timeouts are configured at the call site (via WithActivityOptions).
 	for _, node := range graph.Nodes {
-		if node.Type != "activity" {
+		if node.Type != "workflow" {
 			continue
 		}
-		if node.ActivityOpts == nil {
-			continue // Handled by parent workflow options
-		}
-		opts := node.ActivityOpts
-		hasTimeout := opts.StartToCloseTimeout != "" ||
-			opts.ScheduleToCloseTimeout != "" ||
-			opts.ScheduleToStartTimeout != ""
-		if !hasTimeout {
-			issues = append(issues, Issue{
-				RuleID:      r.ID(),
-				RuleName:    r.Name(),
-				Severity:    r.Severity(),
-				Category:    r.Category(),
-				Message:     fmt.Sprintf("Activity '%s' has no timeout configured", node.Name),
-				Description: r.Description(),
-				Suggestion:  "Add StartToCloseTimeout or ScheduleToCloseTimeout to activity options",
-				FilePath:    node.FilePath,
-				LineNumber:  node.LineNumber,
-				NodeName:    node.Name,
-				NodeType:    node.Type,
-				Fix: &CodeFix{
-					Description: "Add timeout to activity options",
-					Replacements: []Replacement{{
-						FilePath:  node.FilePath,
-						StartLine: node.LineNumber,
-						NewText: `ao := workflow.ActivityOptions{
+
+		for _, callSite := range node.CallSites {
+			if callSite.CallType != "activity" && callSite.CallType != "local_activity" {
+				continue
+			}
+
+			// Check if timeout is configured at this call site
+			hasTimeout := false
+			if callSite.ParsedActivityOpts != nil {
+				opts := callSite.ParsedActivityOpts
+				hasTimeout = opts.StartToCloseTimeout != "" ||
+					opts.ScheduleToCloseTimeout != "" ||
+					opts.ScheduleToStartTimeout != ""
+			}
+
+			if !hasTimeout {
+				issues = append(issues, Issue{
+					RuleID:      r.ID(),
+					RuleName:    r.Name(),
+					Severity:    r.Severity(),
+					Category:    r.Category(),
+					Message:     fmt.Sprintf("Activity '%s' has no timeout configured", callSite.TargetName),
+					Description: r.Description(),
+					Suggestion:  "Add StartToCloseTimeout or ScheduleToCloseTimeout to activity options",
+					FilePath:    callSite.FilePath,
+					LineNumber:  callSite.LineNumber,
+					NodeName:    callSite.TargetName,
+					NodeType:    callSite.CallType,
+					Fix: &CodeFix{
+						Description: "Add timeout to activity options",
+						Replacements: []Replacement{{
+							FilePath:  callSite.FilePath,
+							StartLine: callSite.LineNumber,
+							NewText: `ao := workflow.ActivityOptions{
 	StartToCloseTimeout: 10 * time.Minute,
 }
 ctx = workflow.WithActivityOptions(ctx, ao)`,
-					}},
-				},
-			})
+						}},
+					},
+				})
+			}
 		}
 	}
 	return issues
@@ -224,47 +255,65 @@ func (r *LongRunningActivityWithoutHeartbeatRule) Description() string {
 
 func (r *LongRunningActivityWithoutHeartbeatRule) Check(ctx context.Context, graph *analyzer.TemporalGraph) []Issue {
 	var issues []Issue
-	for _, node := range graph.Nodes {
-		if node.Type != "activity" {
-			continue
-		}
-		if node.ActivityOpts == nil {
-			continue
-		}
-		// Check if activity appears to be long-running (has long timeout or named suggestively)
-		isLongRunning := strings.Contains(strings.ToLower(node.Name), "process") ||
-			strings.Contains(strings.ToLower(node.Name), "batch") ||
-			strings.Contains(strings.ToLower(node.Name), "sync") ||
-			strings.Contains(strings.ToLower(node.Name), "import") ||
-			strings.Contains(strings.ToLower(node.Name), "export") ||
-			strings.Contains(strings.ToLower(node.Name), "migrate")
 
-		if isLongRunning && node.ActivityOpts.HeartbeatTimeout == "" {
-			issues = append(issues, Issue{
-				RuleID:      r.ID(),
-				RuleName:    r.Name(),
-				Severity:    r.Severity(),
-				Category:    r.Category(),
-				Message:     fmt.Sprintf("Potentially long-running activity '%s' has no heartbeat configured", node.Name),
-				Description: r.Description(),
-				Suggestion:  "Add HeartbeatTimeout and call activity.RecordHeartbeat(ctx, progress) periodically in the activity implementation",
-				FilePath:    node.FilePath,
-				LineNumber:  node.LineNumber,
-				NodeName:    node.Name,
-				NodeType:    node.Type,
-				Fix: &CodeFix{
-					Description: "Add heartbeat timeout to activity options",
-					Replacements: []Replacement{{
-						FilePath:  node.FilePath,
-						StartLine: node.LineNumber,
-						NewText: `ao := workflow.ActivityOptions{
+	// Check activity calls in workflows for missing heartbeat timeouts.
+	// Heartbeat timeouts are configured at the call site (via WithActivityOptions).
+	for _, node := range graph.Nodes {
+		if node.Type != "workflow" {
+			continue
+		}
+
+		for _, callSite := range node.CallSites {
+			if callSite.CallType != "activity" && callSite.CallType != "local_activity" {
+				continue
+			}
+
+			// Check if activity appears to be long-running based on naming
+			targetName := strings.ToLower(callSite.TargetName)
+			isLongRunning := strings.Contains(targetName, "process") ||
+				strings.Contains(targetName, "batch") ||
+				strings.Contains(targetName, "sync") ||
+				strings.Contains(targetName, "import") ||
+				strings.Contains(targetName, "export") ||
+				strings.Contains(targetName, "migrate")
+
+			if !isLongRunning {
+				continue
+			}
+
+			// Check if heartbeat timeout is configured at this call site
+			hasHeartbeat := false
+			if callSite.ParsedActivityOpts != nil {
+				hasHeartbeat = callSite.ParsedActivityOpts.HeartbeatTimeout != ""
+			}
+
+			if !hasHeartbeat {
+				issues = append(issues, Issue{
+					RuleID:      r.ID(),
+					RuleName:    r.Name(),
+					Severity:    r.Severity(),
+					Category:    r.Category(),
+					Message:     fmt.Sprintf("Potentially long-running activity '%s' has no heartbeat configured", callSite.TargetName),
+					Description: r.Description(),
+					Suggestion:  "Add HeartbeatTimeout and call activity.RecordHeartbeat(ctx, progress) periodically in the activity implementation",
+					FilePath:    callSite.FilePath,
+					LineNumber:  callSite.LineNumber,
+					NodeName:    callSite.TargetName,
+					NodeType:    callSite.CallType,
+					Fix: &CodeFix{
+						Description: "Add heartbeat timeout to activity options",
+						Replacements: []Replacement{{
+							FilePath:  callSite.FilePath,
+							StartLine: callSite.LineNumber,
+							NewText: `ao := workflow.ActivityOptions{
 	StartToCloseTimeout: 30 * time.Minute,
 	HeartbeatTimeout:    30 * time.Second,
 }
 ctx = workflow.WithActivityOptions(ctx, ao)`,
-					}},
-				},
-			})
+						}},
+					},
+				})
+			}
 		}
 	}
 	return issues

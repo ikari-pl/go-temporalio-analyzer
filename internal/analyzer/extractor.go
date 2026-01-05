@@ -41,6 +41,9 @@ type TemporalCallInfo struct {
 	ArgumentCount int      // Number of arguments passed (excluding ctx and activity/workflow func)
 	ArgumentTypes []string // Types of arguments if determinable
 	ResultType    string   // Type used in .Get() call if present
+
+	// Parsed activity/workflow options
+	ParsedActivityOpts *ActivityOptions
 }
 
 // ExtractCalls finds all temporal workflow and activity calls within a function.
@@ -83,15 +86,16 @@ func (e *callExtractor) ExtractCalls(ctx context.Context, fn *ast.FuncDecl, file
 		info := e.analyzeCall(call, filePath, nil)
 		if info != nil && info.TargetName != "" {
 			callSites = append(callSites, CallSite{
-				TargetName:    info.TargetName,
-				TargetType:    info.Type,
-				CallType:      info.Type,
-				LineNumber:    info.LineNumber,
-				FilePath:      info.FilePath,
-				Options:       info.Options,
-				ArgumentCount: info.ArgumentCount,
-				ArgumentTypes: info.ArgumentTypes,
-				ResultType:    info.ResultType,
+				TargetName:         info.TargetName,
+				TargetType:         info.Type,
+				CallType:           info.Type,
+				LineNumber:         info.LineNumber,
+				FilePath:           info.FilePath,
+				Options:            info.Options,
+				ArgumentCount:      info.ArgumentCount,
+				ArgumentTypes:      info.ArgumentTypes,
+				ResultType:         info.ResultType,
+				ParsedActivityOpts: info.ParsedActivityOpts,
 			})
 		}
 
@@ -163,15 +167,16 @@ func (e *callExtractor) ExtractAllTemporalInfo(ctx context.Context, fn *ast.Func
 		case "activity", "child_workflow", "local_activity":
 			if info.TargetName != "" {
 				details.CallSites = append(details.CallSites, CallSite{
-					TargetName:    info.TargetName,
-					TargetType:    info.Type,
-					CallType:      "execute",
-					LineNumber:    info.LineNumber,
-					FilePath:      info.FilePath,
-					Options:       info.Options,
-					ArgumentCount: info.ArgumentCount,
-					ArgumentTypes: info.ArgumentTypes,
-					ResultType:    info.ResultType,
+					TargetName:         info.TargetName,
+					TargetType:         info.Type,
+					CallType:           "execute",
+					LineNumber:         info.LineNumber,
+					FilePath:           info.FilePath,
+					Options:            info.Options,
+					ArgumentCount:      info.ArgumentCount,
+					ArgumentTypes:      info.ArgumentTypes,
+					ResultType:         info.ResultType,
+					ParsedActivityOpts: info.ParsedActivityOpts,
 				})
 			}
 		}
@@ -401,37 +406,40 @@ func (e *callExtractor) analyzeWorkflowCall(method string, call *ast.CallExpr, f
 	case "ExecuteActivity":
 		target, argCount, argTypes := e.extractTemporalTargetWithArgs(call)
 		return &TemporalCallInfo{
-			Type:          "activity",
-			TargetName:    target,
-			LineNumber:    lineNum,
-			FilePath:      filepath.Base(filePath),
-			Options:       e.extractOptions(call),
-			ArgumentCount: argCount,
-			ArgumentTypes: argTypes,
+			Type:               "activity",
+			TargetName:         target,
+			LineNumber:         lineNum,
+			FilePath:           filepath.Base(filePath),
+			Options:            e.extractOptions(call),
+			ArgumentCount:      argCount,
+			ArgumentTypes:      argTypes,
+			ParsedActivityOpts: e.extractActivityOptions(call),
 		}
 
 	case "ExecuteChildWorkflow":
 		target, argCount, argTypes := e.extractTemporalTargetWithArgs(call)
 		return &TemporalCallInfo{
-			Type:          "child_workflow",
-			TargetName:    target,
-			LineNumber:    lineNum,
-			FilePath:      filepath.Base(filePath),
-			Options:       e.extractOptions(call),
-			ArgumentCount: argCount,
-			ArgumentTypes: argTypes,
+			Type:               "child_workflow",
+			TargetName:         target,
+			LineNumber:         lineNum,
+			FilePath:           filepath.Base(filePath),
+			Options:            e.extractOptions(call),
+			ArgumentCount:      argCount,
+			ArgumentTypes:      argTypes,
+			ParsedActivityOpts: e.extractActivityOptions(call),
 		}
 
 	case "ExecuteLocalActivity":
 		target, argCount, argTypes := e.extractTemporalTargetWithArgs(call)
 		return &TemporalCallInfo{
-			Type:          "local_activity",
-			TargetName:    target,
-			LineNumber:    lineNum,
-			FilePath:      filepath.Base(filePath),
-			Options:       e.extractOptions(call),
-			ArgumentCount: argCount,
-			ArgumentTypes: argTypes,
+			Type:               "local_activity",
+			TargetName:         target,
+			LineNumber:         lineNum,
+			FilePath:           filepath.Base(filePath),
+			Options:            e.extractOptions(call),
+			ArgumentCount:      argCount,
+			ArgumentTypes:      argTypes,
+			ParsedActivityOpts: e.extractActivityOptions(call),
 		}
 
 	case "SetSignalHandler":
@@ -693,6 +701,161 @@ func (e *callExtractor) extractOptions(call *ast.CallExpr) []string {
 	}
 
 	return options
+}
+
+// extractActivityOptions extracts and parses ActivityOptions from a workflow.ExecuteActivity call.
+// It looks for workflow.WithActivityOptions(ctx, opts) and parses the opts struct.
+func (e *callExtractor) extractActivityOptions(call *ast.CallExpr) *ActivityOptions {
+	if len(call.Args) == 0 {
+		return nil
+	}
+
+	// Check if first arg is workflow.WithActivityOptions(ctx, opts)
+	innerCall, ok := call.Args[0].(*ast.CallExpr)
+	if !ok {
+		return nil
+	}
+
+	sel, ok := innerCall.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+
+	// Check for WithActivityOptions or WithLocalActivityOptions
+	if sel.Sel.Name != "WithActivityOptions" && sel.Sel.Name != "WithLocalActivityOptions" {
+		return nil
+	}
+
+	// The opts should be the second argument to WithActivityOptions
+	if len(innerCall.Args) < 2 {
+		return nil
+	}
+
+	optsArg := innerCall.Args[1]
+	return e.parseActivityOptionsExpr(optsArg)
+}
+
+// parseActivityOptionsExpr parses an expression that represents ActivityOptions.
+// It handles composite literals and tries to extract RetryPolicy and timeout fields.
+func (e *callExtractor) parseActivityOptionsExpr(expr ast.Expr) *ActivityOptions {
+	switch t := expr.(type) {
+	case *ast.CompositeLit:
+		return e.parseActivityOptionsLiteral(t)
+	case *ast.UnaryExpr:
+		// Handle &workflow.ActivityOptions{...}
+		if t.Op.String() == "&" {
+			if lit, ok := t.X.(*ast.CompositeLit); ok {
+				return e.parseActivityOptionsLiteral(lit)
+			}
+		}
+	case *ast.Ident:
+		// Variable reference - we can't trace it statically without more context,
+		// but we'll mark it as "options present but not parsed"
+		return &ActivityOptions{
+			// Mark that options were provided via variable (can't parse contents)
+			optionsProvided: true,
+		}
+	}
+	return nil
+}
+
+// parseActivityOptionsLiteral parses a workflow.ActivityOptions{...} composite literal.
+func (e *callExtractor) parseActivityOptionsLiteral(lit *ast.CompositeLit) *ActivityOptions {
+	opts := &ActivityOptions{
+		optionsProvided: true,
+	}
+
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+
+		key, ok := kv.Key.(*ast.Ident)
+		if !ok {
+			continue
+		}
+
+		switch key.Name {
+		case "RetryPolicy":
+			// RetryPolicy is present - parse it if possible
+			opts.RetryPolicy = e.parseRetryPolicy(kv.Value)
+		case "StartToCloseTimeout":
+			opts.StartToCloseTimeout = e.extractDurationString(kv.Value)
+		case "ScheduleToCloseTimeout":
+			opts.ScheduleToCloseTimeout = e.extractDurationString(kv.Value)
+		case "ScheduleToStartTimeout":
+			opts.ScheduleToStartTimeout = e.extractDurationString(kv.Value)
+		case "HeartbeatTimeout":
+			opts.HeartbeatTimeout = e.extractDurationString(kv.Value)
+		}
+	}
+
+	return opts
+}
+
+// parseRetryPolicy parses a temporal.RetryPolicy struct literal.
+func (e *callExtractor) parseRetryPolicy(expr ast.Expr) *RetryPolicy {
+	// Handle &temporal.RetryPolicy{...}
+	if unary, ok := expr.(*ast.UnaryExpr); ok && unary.Op.String() == "&" {
+		expr = unary.X
+	}
+
+	lit, ok := expr.(*ast.CompositeLit)
+	if !ok {
+		// It's set to something (variable, function call, etc.) - mark as present
+		return &RetryPolicy{policyProvided: true}
+	}
+
+	policy := &RetryPolicy{policyProvided: true}
+
+	for _, elt := range lit.Elts {
+		kv, ok := elt.(*ast.KeyValueExpr)
+		if !ok {
+			continue
+		}
+
+		key, ok := kv.Key.(*ast.Ident)
+		if !ok {
+			continue
+		}
+
+		switch key.Name {
+		case "InitialInterval":
+			policy.InitialInterval = e.extractDurationString(kv.Value)
+		case "BackoffCoefficient":
+			policy.BackoffCoefficient = e.extractFloatString(kv.Value)
+		case "MaximumInterval":
+			policy.MaximumInterval = e.extractDurationString(kv.Value)
+		case "MaximumAttempts":
+			policy.MaximumAttempts = e.extractIntValue(kv.Value)
+		}
+	}
+
+	return policy
+}
+
+// extractDurationString extracts a duration expression as a string.
+func (e *callExtractor) extractDurationString(expr ast.Expr) string {
+	return e.exprToString(expr)
+}
+
+// extractFloatString extracts a float expression as a string.
+func (e *callExtractor) extractFloatString(expr ast.Expr) string {
+	if lit, ok := expr.(*ast.BasicLit); ok {
+		return lit.Value
+	}
+	return e.exprToString(expr)
+}
+
+// extractIntValue extracts an integer value from an expression.
+func (e *callExtractor) extractIntValue(expr ast.Expr) int {
+	if lit, ok := expr.(*ast.BasicLit); ok {
+		if val, err := strconv.Atoi(lit.Value); err == nil {
+			return val
+		}
+	}
+	return 0
 }
 
 // ExtractParameters extracts parameter information from a function declaration.
@@ -961,15 +1124,16 @@ func (e *callExtractor) ExtractCallsWithFileSet(ctx context.Context, fn *ast.Fun
 		info := e.analyzeCall(call, filePath, fset)
 		if info != nil && info.TargetName != "" {
 			callSites = append(callSites, CallSite{
-				TargetName:    info.TargetName,
-				TargetType:    info.Type,
-				CallType:      info.Type,
-				LineNumber:    info.LineNumber,
-				FilePath:      info.FilePath,
-				Options:       info.Options,
-				ArgumentCount: info.ArgumentCount,
-				ArgumentTypes: info.ArgumentTypes,
-				ResultType:    info.ResultType,
+				TargetName:         info.TargetName,
+				TargetType:         info.Type,
+				CallType:           info.Type,
+				LineNumber:         info.LineNumber,
+				FilePath:           info.FilePath,
+				Options:            info.Options,
+				ArgumentCount:      info.ArgumentCount,
+				ArgumentTypes:      info.ArgumentTypes,
+				ResultType:         info.ResultType,
+				ParsedActivityOpts: info.ParsedActivityOpts,
 			})
 		}
 

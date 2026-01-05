@@ -50,6 +50,9 @@ type CallSite struct {
 	ArgumentCount int      `json:"argument_count,omitempty"` // Number of arguments passed (excluding ctx and activity func)
 	ArgumentTypes []string `json:"argument_types,omitempty"` // Types of arguments if determinable
 	ResultType    string   `json:"result_type,omitempty"`    // Type used in .Get() call if present
+
+	// Parsed activity options from the call site
+	ParsedActivityOpts *ActivityOptions `json:"parsed_activity_opts,omitempty"`
 }
 
 // InternalCall represents a regular Go function/method call within an activity or workflow.
@@ -124,22 +127,53 @@ type WorkflowOptions struct {
 
 // ActivityOptions represents activity execution options.
 type ActivityOptions struct {
-	TaskQueue           string       `json:"task_queue,omitempty"`
-	ScheduleToStartTimeout string    `json:"schedule_to_start_timeout,omitempty"`
-	StartToCloseTimeout string       `json:"start_to_close_timeout,omitempty"`
-	HeartbeatTimeout    string       `json:"heartbeat_timeout,omitempty"`
-	ScheduleToCloseTimeout string    `json:"schedule_to_close_timeout,omitempty"`
-	RetryPolicy         *RetryPolicy `json:"retry_policy,omitempty"`
-	WaitForCancellation bool         `json:"wait_for_cancellation,omitempty"`
+	TaskQueue              string       `json:"task_queue,omitempty"`
+	ScheduleToStartTimeout string       `json:"schedule_to_start_timeout,omitempty"`
+	StartToCloseTimeout    string       `json:"start_to_close_timeout,omitempty"`
+	HeartbeatTimeout       string       `json:"heartbeat_timeout,omitempty"`
+	ScheduleToCloseTimeout string       `json:"schedule_to_close_timeout,omitempty"`
+	RetryPolicy            *RetryPolicy `json:"retry_policy,omitempty"`
+	WaitForCancellation    bool         `json:"wait_for_cancellation,omitempty"`
+
+	// optionsProvided indicates that activity options were specified (even if we couldn't parse them)
+	optionsProvided bool
+}
+
+// OptionsProvided returns true if activity options were specified in the code.
+func (ao *ActivityOptions) OptionsProvided() bool {
+	return ao != nil && ao.optionsProvided
+}
+
+// HasRetryPolicy returns true if a retry policy was specified.
+func (ao *ActivityOptions) HasRetryPolicy() bool {
+	if ao == nil || ao.RetryPolicy == nil {
+		return false
+	}
+	rp := ao.RetryPolicy
+	// Return true if policyProvided flag is set, OR if any retry policy fields have values
+	return rp.policyProvided ||
+		rp.InitialInterval != "" ||
+		rp.BackoffCoefficient != "" ||
+		rp.MaximumInterval != "" ||
+		rp.MaximumAttempts > 0 ||
+		len(rp.NonRetryableErrors) > 0
 }
 
 // RetryPolicy represents a retry policy configuration.
 type RetryPolicy struct {
 	InitialInterval    string   `json:"initial_interval,omitempty"`
-	BackoffCoefficient float64  `json:"backoff_coefficient,omitempty"`
+	BackoffCoefficient string   `json:"backoff_coefficient,omitempty"` // Stored as string to preserve source format
 	MaximumInterval    string   `json:"maximum_interval,omitempty"`
 	MaximumAttempts    int      `json:"maximum_attempts,omitempty"`
 	NonRetryableErrors []string `json:"non_retryable_errors,omitempty"`
+
+	// policyProvided indicates that a retry policy was specified (even if we couldn't parse details)
+	policyProvided bool
+}
+
+// PolicyProvided returns true if a retry policy was specified in the code.
+func (rp *RetryPolicy) PolicyProvided() bool {
+	return rp != nil && rp.policyProvided
 }
 
 // ChildWorkflow represents a child workflow execution.
