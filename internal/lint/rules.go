@@ -806,6 +806,13 @@ func detectCycle(ctx context.Context, node *analyzer.TemporalNode, graph *analyz
 	path = append(path, node.Name)
 
 	for _, callSite := range node.CallSites {
+		// Skip self-referential calls (recursion) - these are not circular dependencies.
+		// A method calling itself is valid recursion, not a deadlock-causing cycle.
+		// Circular dependencies require at least 2 different nodes (A -> B -> A).
+		if callSite.TargetName == node.Name {
+			continue
+		}
+
 		if childNode, exists := graph.Nodes[callSite.TargetName]; exists {
 			if !visited[childNode.Name] {
 				if cycle := detectCycle(ctx, childNode, graph, visited, recStack, path); cycle != "" {
