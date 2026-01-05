@@ -2,6 +2,7 @@ package lint
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/ikari-pl/go-temporalio-analyzer/internal/analyzer"
@@ -527,14 +528,14 @@ func TestIssueFields(t *testing.T) {
 	}
 }
 
-func TestArgumentCountMismatchRule(t *testing.T) {
-	rule := &ArgumentCountMismatchRule{}
+func TestArgumentsMismatchRule(t *testing.T) {
+	rule := &ArgumentsMismatchRule{}
 
 	if rule.ID() != "TA040" {
 		t.Errorf("ID() = %q, want %q", rule.ID(), "TA040")
 	}
-	if rule.Name() != "argument-count-mismatch" {
-		t.Errorf("Name() = %q, want %q", rule.Name(), "argument-count-mismatch")
+	if rule.Name() != "arguments-mismatch" {
+		t.Errorf("Name() = %q, want %q", rule.Name(), "arguments-mismatch")
 	}
 	if rule.Severity() != SeverityError {
 		t.Errorf("Severity() = %v, want %v", rule.Severity(), SeverityError)
@@ -590,6 +591,69 @@ func TestArgumentCountMismatchRule(t *testing.T) {
 	issues = rule.Check(ctx, graph)
 	if len(issues) != 0 {
 		t.Error("Should skip check when ArgumentCount is 0")
+	}
+
+	// Test return type mismatch
+	graphWithReturnType := &analyzer.TemporalGraph{
+		Nodes: map[string]*analyzer.TemporalNode{
+			"ProcessOrderWorkflow": {
+				Name: "ProcessOrderWorkflow",
+				Type: "workflow",
+				CallSites: []analyzer.CallSite{
+					{
+						TargetName:    "CalculateTotalActivity",
+						TargetType:    "activity",
+						ArgumentCount: 1,
+						ResultType:    "string", // Wrong type - activity returns int
+						LineNumber:    25,
+						FilePath:      "workflow.go",
+					},
+				},
+			},
+			"CalculateTotalActivity": {
+				Name: "CalculateTotalActivity",
+				Type: "activity",
+				Parameters: map[string]string{
+					"ctx":   "context.Context",
+					"order": "Order",
+				},
+				ReturnType: "int", // Returns int, but caller expects string
+			},
+		},
+	}
+
+	issues = rule.Check(ctx, graphWithReturnType)
+	if len(issues) != 1 {
+		t.Errorf("Expected 1 issue for return type mismatch, got %d", len(issues))
+	}
+	if len(issues) > 0 {
+		if !strings.Contains(issues[0].Message, "result as 'string'") {
+			t.Errorf("Expected message to mention wrong result type 'string', got: %s", issues[0].Message)
+		}
+		if !strings.Contains(issues[0].Message, "returns 'int'") {
+			t.Errorf("Expected message to mention correct return type 'int', got: %s", issues[0].Message)
+		}
+	}
+
+	// Test with matching return type (should not report issue)
+	graphWithReturnType.Nodes["ProcessOrderWorkflow"].CallSites[0].ResultType = "int"
+	issues = rule.Check(ctx, graphWithReturnType)
+	if len(issues) != 0 {
+		t.Errorf("Should not report issue for matching return type, got %d", len(issues))
+	}
+
+	// Test with unknown result type (skip check)
+	graphWithReturnType.Nodes["ProcessOrderWorkflow"].CallSites[0].ResultType = "unknown"
+	issues = rule.Check(ctx, graphWithReturnType)
+	if len(issues) != 0 {
+		t.Errorf("Should skip check when ResultType is 'unknown', got %d", len(issues))
+	}
+
+	// Test with var: prefix (cannot determine, skip check)
+	graphWithReturnType.Nodes["ProcessOrderWorkflow"].CallSites[0].ResultType = "var:result"
+	issues = rule.Check(ctx, graphWithReturnType)
+	if len(issues) != 0 {
+		t.Errorf("Should skip check when ResultType has 'var:' prefix (type unknown), got %d", len(issues))
 	}
 }
 

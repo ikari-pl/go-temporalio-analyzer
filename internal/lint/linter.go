@@ -128,7 +128,7 @@ func (l *Linter) registerRules() {
 	l.rules = append(l.rules, &ContinueAsNewWithoutConditionRule{})
 
 	// Type Safety Rules
-	l.rules = append(l.rules, &ArgumentCountMismatchRule{})
+	l.rules = append(l.rules, &ArgumentsMismatchRule{})
 }
 
 // isRuleEnabled checks if a rule should be executed.

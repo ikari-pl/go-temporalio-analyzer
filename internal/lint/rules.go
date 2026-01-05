@@ -633,63 +633,125 @@ func (r *ContinueAsNewWithoutConditionRule) Check(ctx context.Context, graph *an
 // Type Safety Rules
 // =============================================================================
 
-// ArgumentCountMismatchRule checks for activities/workflows called with wrong number of arguments.
-type ArgumentCountMismatchRule struct{}
+// ArgumentsMismatchRule checks for activities/workflows called with wrong arguments or return types.
+type ArgumentsMismatchRule struct{}
 
-func (r *ArgumentCountMismatchRule) ID() string         { return "TA040" }
-func (r *ArgumentCountMismatchRule) Name() string       { return "argument-count-mismatch" }
-func (r *ArgumentCountMismatchRule) Category() Category { return CategoryReliability }
-func (r *ArgumentCountMismatchRule) Severity() Severity { return SeverityError }
-func (r *ArgumentCountMismatchRule) Description() string {
-	return "Calling an activity or workflow with the wrong number of arguments will cause a runtime error. Temporal deserializes arguments by position, so mismatches cause failures that are hard to debug."
+func (r *ArgumentsMismatchRule) ID() string         { return "TA040" }
+func (r *ArgumentsMismatchRule) Name() string       { return "arguments-mismatch" }
+func (r *ArgumentsMismatchRule) Category() Category { return CategoryReliability }
+func (r *ArgumentsMismatchRule) Severity() Severity { return SeverityError }
+func (r *ArgumentsMismatchRule) Description() string {
+	return "Calling an activity or workflow with wrong number/types of arguments, or reading results into wrong types, causes runtime errors. Temporal deserializes by position and type, so mismatches fail at runtime."
 }
 
-func (r *ArgumentCountMismatchRule) Check(ctx context.Context, graph *analyzer.TemporalGraph) []Issue {
+func (r *ArgumentsMismatchRule) Check(ctx context.Context, graph *analyzer.TemporalGraph) []Issue {
 	var issues []Issue
 
 	for _, node := range graph.Nodes {
 		// Check each call site
 		for _, callSite := range node.CallSites {
-			// Skip if no argument count was captured
-			if callSite.ArgumentCount == 0 && len(callSite.ArgumentTypes) == 0 {
-				continue
-			}
-
 			// Find the target node
 			targetNode, exists := graph.Nodes[callSite.TargetName]
 			if !exists {
 				continue
 			}
 
-			// Count expected parameters (excluding context)
-			expectedCount := countNonContextParams(targetNode.Parameters)
+			// Check argument count mismatch
+			if callSite.ArgumentCount > 0 || len(callSite.ArgumentTypes) > 0 {
+				expectedCount := countNonContextParams(targetNode.Parameters)
 
-			if callSite.ArgumentCount != expectedCount {
-				issues = append(issues, Issue{
-					RuleID:   r.ID(),
-					RuleName: r.Name(),
-					Severity: r.Severity(),
-					Category: r.Category(),
-					Message: fmt.Sprintf(
-						"Call to '%s' passes %d argument(s), but %s '%s' expects %d",
-						callSite.TargetName,
-						callSite.ArgumentCount,
-						targetNode.Type,
-						targetNode.Name,
-						expectedCount,
-					),
-					Description: r.Description(),
-					Suggestion:  fmt.Sprintf("Update the call to pass exactly %d argument(s) matching the %s signature", expectedCount, targetNode.Type),
-					FilePath:    callSite.FilePath,
-					LineNumber:  callSite.LineNumber,
-					NodeName:    node.Name,
-					NodeType:    node.Type,
-				})
+				if callSite.ArgumentCount != expectedCount {
+					issues = append(issues, Issue{
+						RuleID:   r.ID(),
+						RuleName: r.Name(),
+						Severity: r.Severity(),
+						Category: r.Category(),
+						Message: fmt.Sprintf(
+							"Call to '%s' passes %d argument(s), but %s '%s' expects %d",
+							callSite.TargetName,
+							callSite.ArgumentCount,
+							targetNode.Type,
+							targetNode.Name,
+							expectedCount,
+						),
+						Description: r.Description(),
+						Suggestion:  fmt.Sprintf("Update the call to pass exactly %d argument(s) matching the %s signature", expectedCount, targetNode.Type),
+						FilePath:    callSite.FilePath,
+						LineNumber:  callSite.LineNumber,
+						NodeName:    node.Name,
+						NodeType:    node.Type,
+					})
+				}
+			}
+
+			// Check return type mismatch
+			if callSite.ResultType != "" && targetNode.ReturnType != "" {
+				if !isTypeCompatible(callSite.ResultType, targetNode.ReturnType) {
+					issues = append(issues, Issue{
+						RuleID:   r.ID(),
+						RuleName: r.Name(),
+						Severity: r.Severity(),
+						Category: r.Category(),
+						Message: fmt.Sprintf(
+							"Call to '%s' reads result as '%s', but %s '%s' returns '%s'",
+							callSite.TargetName,
+							callSite.ResultType,
+							targetNode.Type,
+							targetNode.Name,
+							targetNode.ReturnType,
+						),
+						Description: r.Description(),
+						Suggestion:  fmt.Sprintf("Use a variable of type '%s' to receive the result", targetNode.ReturnType),
+						FilePath:    callSite.FilePath,
+						LineNumber:  callSite.LineNumber,
+						NodeName:    node.Name,
+						NodeType:    node.Type,
+					})
+				}
 			}
 		}
 	}
 
 	return issues
+}
+
+// isTypeCompatible checks if the result type is compatible with the expected return type.
+func isTypeCompatible(resultType, returnType string) bool {
+	// Handle pointer types - result is usually a pointer to the actual type
+	resultType = strings.TrimPrefix(resultType, "*")
+
+	// If result type starts with "var:", "call:", or "selector:", we can't determine compatibility
+	// These are placeholders for when we couldn't statically determine the type
+	if strings.HasPrefix(resultType, "var:") ||
+		strings.HasPrefix(resultType, "call:") ||
+		strings.HasPrefix(resultType, "selector:") ||
+		resultType == "call" ||
+		resultType == "indexed" {
+		return true // Can't determine, assume compatible
+	}
+
+	// "unknown" type means we couldn't determine it, skip check
+	if resultType == "unknown" || resultType == "nil" {
+		return true
+	}
+
+	// Direct match
+	if resultType == returnType {
+		return true
+	}
+
+	// Handle interface{} / any - compatible with anything
+	if returnType == "interface{}" || returnType == "any" {
+		return true
+	}
+
+	// Handle error type specially - it's often the last return value
+	// and can be received into error or nil
+	if returnType == "error" && (resultType == "error" || resultType == "nil") {
+		return true
+	}
+
+	return false
 }
 
 // countNonContextParams counts parameters that aren't context.Context or workflow.Context.

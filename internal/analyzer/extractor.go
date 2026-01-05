@@ -197,12 +197,28 @@ func (e *callExtractor) analyzeCall(call *ast.CallExpr, filePath string, fset *t
 		return nil
 	}
 
+	lineNum := e.getLineNumber(call, fset)
+
+	// Handle chained calls like workflow.ExecuteActivity(...).Get(ctx, &result)
+	if innerCall, ok := sel.X.(*ast.CallExpr); ok {
+		if sel.Sel.Name == "Get" {
+			// This is a .Get() call on a Future - analyze the inner call and extract result type
+			info := e.analyzeCall(innerCall, filePath, fset)
+			if info != nil {
+				// Extract result type from .Get(ctx, &result)
+				if len(call.Args) >= 2 {
+					info.ResultType = e.extractResultType(call.Args[1])
+				}
+				return info
+			}
+		}
+		return nil
+	}
+
 	ident, ok := sel.X.(*ast.Ident)
 	if !ok {
 		return nil
 	}
-
-	lineNum := e.getLineNumber(call, fset)
 
 	// Check if this is a workflow package call
 	if ident.Name == "workflow" {
@@ -798,6 +814,47 @@ func (e *callExtractor) inferExprType(expr ast.Expr) string {
 	case *ast.CallExpr:
 		// Function call result - type depends on function
 		return "call:" + e.exprToString(t.Fun)
+	}
+	return "unknown"
+}
+
+// extractResultType extracts the type from a result pointer expression passed to .Get().
+// Handles patterns like: &result, result, &MyType{}
+func (e *callExtractor) extractResultType(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.UnaryExpr:
+		// &result or &MyType{}
+		if t.Op.String() == "&" {
+			switch inner := t.X.(type) {
+			case *ast.Ident:
+				// &result - variable name, type unknown statically
+				return "var:" + inner.Name
+			case *ast.CompositeLit:
+				// &MyType{} - composite literal with explicit type
+				if inner.Type != nil {
+					return e.typeToString(inner.Type)
+				}
+			case *ast.IndexExpr:
+				// &slice[i] - indexed expression
+				return "indexed"
+			}
+		}
+	case *ast.Ident:
+		// result - variable (usually already a pointer)
+		return "var:" + t.Name
+	case *ast.CompositeLit:
+		// MyType{} - composite literal (rare in .Get() but handle it)
+		if t.Type != nil {
+			return e.typeToString(t.Type)
+		}
+	case *ast.CallExpr:
+		// new(MyType) pattern
+		if ident, ok := t.Fun.(*ast.Ident); ok && ident.Name == "new" {
+			if len(t.Args) > 0 {
+				return e.typeToString(t.Args[0])
+			}
+		}
+		return "call"
 	}
 	return "unknown"
 }
