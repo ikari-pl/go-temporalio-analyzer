@@ -569,3 +569,257 @@ func f() {
 		t.Errorf("getLineNumber without fset should return positive, got %d", lineNumNoFset)
 	}
 }
+
+func TestExtractResultType(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	e := NewCallExtractor(logger).(*callExtractor)
+
+	tests := []struct {
+		name     string
+		code     string
+		wantType string
+	}{
+		{
+			name:     "unary address of identifier",
+			code:     `package test; var _ = &result`,
+			wantType: "var:result",
+		},
+		{
+			name:     "unary address of composite literal",
+			code:     `package test; var _ = &MyType{}`,
+			wantType: "MyType",
+		},
+		{
+			name:     "identifier",
+			code:     `package test; var _ = result`,
+			wantType: "var:result",
+		},
+		{
+			name:     "new call",
+			code:     `package test; var _ = new(MyType)`,
+			wantType: "MyType",
+		},
+		{
+			name:     "composite literal",
+			code:     `package test; var _ = MyType{}`,
+			wantType: "MyType",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "test.go", tt.code, 0)
+			if err != nil {
+				t.Fatalf("Failed to parse code: %v", err)
+			}
+
+			// Find the expression
+			var expr ast.Expr
+			ast.Inspect(file, func(n ast.Node) bool {
+				if vs, ok := n.(*ast.ValueSpec); ok && len(vs.Values) > 0 {
+					expr = vs.Values[0]
+					return false
+				}
+				return true
+			})
+
+			if expr == nil {
+				t.Fatal("Expression not found")
+			}
+
+			got := e.extractResultType(expr)
+			if got != tt.wantType {
+				t.Errorf("extractResultType() = %q, want %q", got, tt.wantType)
+			}
+		})
+	}
+}
+
+func TestInferExprType(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	e := NewCallExtractor(logger).(*callExtractor)
+
+	tests := []struct {
+		name     string
+		code     string
+		wantType string
+	}{
+		{
+			name:     "int literal",
+			code:     `package test; var _ = 42`,
+			wantType: "int",
+		},
+		{
+			name:     "float literal",
+			code:     `package test; var _ = 3.14`,
+			wantType: "float64",
+		},
+		{
+			name:     "string literal",
+			code:     `package test; var _ = "hello"`,
+			wantType: "string",
+		},
+		{
+			name:     "bool true",
+			code:     `package test; var _ = true`,
+			wantType: "bool",
+		},
+		{
+			name:     "bool false",
+			code:     `package test; var _ = false`,
+			wantType: "bool",
+		},
+		{
+			name:     "nil",
+			code:     `package test; var _ = nil`,
+			wantType: "nil",
+		},
+		{
+			name:     "identifier",
+			code:     `package test; var _ = myVar`,
+			wantType: "var:myVar",
+		},
+		{
+			name:     "selector",
+			code:     `package test; var _ = pkg.Value`,
+			wantType: "selector:pkg.Value",
+		},
+		{
+			name:     "address of",
+			code:     `package test; var _ = &myVar`,
+			wantType: "*var:myVar",
+		},
+		{
+			name:     "composite literal",
+			code:     `package test; var _ = MyStruct{}`,
+			wantType: "MyStruct",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fset := token.NewFileSet()
+			file, err := parser.ParseFile(fset, "test.go", tt.code, 0)
+			if err != nil {
+				t.Fatalf("Failed to parse code: %v", err)
+			}
+
+			// Find the expression
+			var expr ast.Expr
+			ast.Inspect(file, func(n ast.Node) bool {
+				if vs, ok := n.(*ast.ValueSpec); ok && len(vs.Values) > 0 {
+					expr = vs.Values[0]
+					return false
+				}
+				return true
+			})
+
+			if expr == nil {
+				t.Fatal("Expression not found")
+			}
+
+			got := e.inferExprType(expr)
+			if got != tt.wantType {
+				t.Errorf("inferExprType() = %q, want %q", got, tt.wantType)
+			}
+		})
+	}
+}
+
+func TestExtractCallsWithGetResultType(t *testing.T) {
+	code := `package test
+
+import "go.temporal.io/sdk/workflow"
+
+func MyWorkflow(ctx workflow.Context) error {
+	var result MyResult
+	workflow.ExecuteActivity(ctx, MyActivity, "arg").Get(ctx, &result)
+	return nil
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", code, 0)
+	if err != nil {
+		t.Fatalf("Failed to parse code: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	e := NewCallExtractor(logger)
+
+	ctx := context.Background()
+
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "MyWorkflow" {
+			calls, err := e.ExtractCalls(ctx, fn, "test.go")
+			if err != nil {
+				t.Fatalf("ExtractCalls failed: %v", err)
+			}
+			if len(calls) == 0 {
+				t.Fatal("Expected to find at least one call")
+			}
+
+			// Check that result type was extracted from .Get()
+			found := false
+			for _, call := range calls {
+				if call.TargetName == "MyActivity" {
+					found = true
+					if call.ResultType == "" {
+						t.Error("Expected ResultType to be extracted from .Get() call")
+					}
+					if call.ResultType != "var:result" {
+						t.Errorf("Expected ResultType = 'var:result', got %q", call.ResultType)
+					}
+				}
+			}
+			if !found {
+				t.Error("Expected to find MyActivity call")
+			}
+			return
+		}
+	}
+	t.Fatal("Function MyWorkflow not found")
+}
+
+func TestExtractCallsWithGetCompositeLiteral(t *testing.T) {
+	code := `package test
+
+import "go.temporal.io/sdk/workflow"
+
+func MyWorkflow(ctx workflow.Context) error {
+	workflow.ExecuteActivity(ctx, MyActivity).Get(ctx, &MyResult{})
+	return nil
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", code, 0)
+	if err != nil {
+		t.Fatalf("Failed to parse code: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	e := NewCallExtractor(logger)
+
+	ctx := context.Background()
+
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "MyWorkflow" {
+			calls, err := e.ExtractCalls(ctx, fn, "test.go")
+			if err != nil {
+				t.Fatalf("ExtractCalls failed: %v", err)
+			}
+
+			for _, call := range calls {
+				if call.TargetName == "MyActivity" {
+					if call.ResultType != "MyResult" {
+						t.Errorf("Expected ResultType = 'MyResult', got %q", call.ResultType)
+					}
+					return
+				}
+			}
+			t.Error("Expected to find MyActivity call")
+			return
+		}
+	}
+	t.Fatal("Function MyWorkflow not found")
+}

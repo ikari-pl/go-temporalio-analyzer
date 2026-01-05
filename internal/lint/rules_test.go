@@ -2,6 +2,7 @@ package lint
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/ikari-pl/go-temporalio-analyzer/internal/analyzer"
@@ -524,6 +525,190 @@ func TestIssueFields(t *testing.T) {
 	}
 	if len(issue.Fix.Replacements) != 1 {
 		t.Error("Expected 1 replacement")
+	}
+}
+
+func TestArgumentsMismatchRule(t *testing.T) {
+	rule := &ArgumentsMismatchRule{}
+
+	if rule.ID() != "TA040" {
+		t.Errorf("ID() = %q, want %q", rule.ID(), "TA040")
+	}
+	if rule.Name() != "arguments-mismatch" {
+		t.Errorf("Name() = %q, want %q", rule.Name(), "arguments-mismatch")
+	}
+	if rule.Severity() != SeverityError {
+		t.Errorf("Severity() = %v, want %v", rule.Severity(), SeverityError)
+	}
+
+	// Test with wrong argument count
+	graph := &analyzer.TemporalGraph{
+		Nodes: map[string]*analyzer.TemporalNode{
+			"MyWorkflow": {
+				Name: "MyWorkflow",
+				Type: "workflow",
+				CallSites: []analyzer.CallSite{
+					{
+						TargetName:    "SendEmailActivity",
+						TargetType:    "activity",
+						CallType:      "activity", // Required for argument count check
+						ArgumentCount: 1,          // Only passing 1 arg
+						LineNumber:    10,
+						FilePath:      "workflow.go",
+					},
+				},
+			},
+			"SendEmailActivity": {
+				Name: "SendEmailActivity",
+				Type: "activity",
+				Parameters: map[string]string{
+					"ctx":     "context.Context",
+					"to":      "string",
+					"subject": "string",
+					"body":    "string",
+				}, // Expects 3 args (excluding ctx)
+			},
+		},
+	}
+
+	ctx := context.Background()
+	issues := rule.Check(ctx, graph)
+	if len(issues) != 1 {
+		t.Errorf("Expected 1 issue for argument count mismatch, got %d", len(issues))
+	}
+	if len(issues) > 0 && issues[0].RuleID != "TA040" {
+		t.Errorf("Issue RuleID = %q, want %q", issues[0].RuleID, "TA040")
+	}
+
+	// Test with correct argument count
+	graph.Nodes["MyWorkflow"].CallSites[0].ArgumentCount = 3 // Correct: to, subject, body
+	issues = rule.Check(ctx, graph)
+	if len(issues) != 0 {
+		t.Errorf("Should not report issue for correct argument count, got %d", len(issues))
+	}
+
+	// Test with zero arguments when some are expected - should report mismatch
+	graph.Nodes["MyWorkflow"].CallSites[0].ArgumentCount = 0
+	issues = rule.Check(ctx, graph)
+	if len(issues) != 1 {
+		t.Errorf("Should report issue when 0 args passed but %d expected, got %d issues", 3, len(issues))
+	}
+
+	// Test return type mismatch
+	graphWithReturnType := &analyzer.TemporalGraph{
+		Nodes: map[string]*analyzer.TemporalNode{
+			"ProcessOrderWorkflow": {
+				Name: "ProcessOrderWorkflow",
+				Type: "workflow",
+				CallSites: []analyzer.CallSite{
+					{
+						TargetName:    "CalculateTotalActivity",
+						TargetType:    "activity",
+						ArgumentCount: 1,
+						ResultType:    "string", // Wrong type - activity returns int
+						LineNumber:    25,
+						FilePath:      "workflow.go",
+					},
+				},
+			},
+			"CalculateTotalActivity": {
+				Name: "CalculateTotalActivity",
+				Type: "activity",
+				Parameters: map[string]string{
+					"ctx":   "context.Context",
+					"order": "Order",
+				},
+				ReturnType: "int", // Returns int, but caller expects string
+			},
+		},
+	}
+
+	issues = rule.Check(ctx, graphWithReturnType)
+	if len(issues) != 1 {
+		t.Errorf("Expected 1 issue for return type mismatch, got %d", len(issues))
+	}
+	if len(issues) > 0 {
+		if !strings.Contains(issues[0].Message, "result as 'string'") {
+			t.Errorf("Expected message to mention wrong result type 'string', got: %s", issues[0].Message)
+		}
+		if !strings.Contains(issues[0].Message, "returns 'int'") {
+			t.Errorf("Expected message to mention correct return type 'int', got: %s", issues[0].Message)
+		}
+	}
+
+	// Test with matching return type (should not report issue)
+	graphWithReturnType.Nodes["ProcessOrderWorkflow"].CallSites[0].ResultType = "int"
+	issues = rule.Check(ctx, graphWithReturnType)
+	if len(issues) != 0 {
+		t.Errorf("Should not report issue for matching return type, got %d", len(issues))
+	}
+
+	// Test with unknown result type (skip check)
+	graphWithReturnType.Nodes["ProcessOrderWorkflow"].CallSites[0].ResultType = "unknown"
+	issues = rule.Check(ctx, graphWithReturnType)
+	if len(issues) != 0 {
+		t.Errorf("Should skip check when ResultType is 'unknown', got %d", len(issues))
+	}
+
+	// Test with var: prefix (cannot determine, skip check)
+	graphWithReturnType.Nodes["ProcessOrderWorkflow"].CallSites[0].ResultType = "var:result"
+	issues = rule.Check(ctx, graphWithReturnType)
+	if len(issues) != 0 {
+		t.Errorf("Should skip check when ResultType has 'var:' prefix (type unknown), got %d", len(issues))
+	}
+}
+
+func TestCountNonContextParams(t *testing.T) {
+	tests := []struct {
+		name   string
+		params map[string]string
+		want   int
+	}{
+		{
+			name:   "empty params",
+			params: map[string]string{},
+			want:   0,
+		},
+		{
+			name: "only context",
+			params: map[string]string{
+				"ctx": "context.Context",
+			},
+			want: 0,
+		},
+		{
+			name: "workflow context only",
+			params: map[string]string{
+				"ctx": "workflow.Context",
+			},
+			want: 0,
+		},
+		{
+			name: "context plus params",
+			params: map[string]string{
+				"ctx":    "context.Context",
+				"input":  "string",
+				"count":  "int",
+			},
+			want: 2,
+		},
+		{
+			name: "no context",
+			params: map[string]string{
+				"input": "string",
+				"count": "int",
+			},
+			want: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := countNonContextParams(tt.params)
+			if got != tt.want {
+				t.Errorf("countNonContextParams() = %d, want %d", got, tt.want)
+			}
+		})
 	}
 }
 

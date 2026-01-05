@@ -45,6 +45,11 @@ type CallSite struct {
 	LineNumber int      `json:"line_number"`
 	FilePath   string   `json:"file_path"`
 	Options    []string `json:"options,omitempty"` // Activity/workflow options used
+
+	// Signature validation fields
+	ArgumentCount int      `json:"argument_count,omitempty"` // Number of arguments passed (excluding ctx and activity func)
+	ArgumentTypes []string `json:"argument_types,omitempty"` // Types of arguments if determinable
+	ResultType    string   `json:"result_type,omitempty"`    // Type used in .Get() call if present
 }
 
 // InternalCall represents a regular Go function/method call within an activity or workflow.

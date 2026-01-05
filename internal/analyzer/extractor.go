@@ -36,6 +36,11 @@ type TemporalCallInfo struct {
 	TimerDef      *TimerDef
 	VersionDef    *VersionDef
 	SearchAttrDef *SearchAttrDef
+
+	// Signature validation
+	ArgumentCount int      // Number of arguments passed (excluding ctx and activity/workflow func)
+	ArgumentTypes []string // Types of arguments if determinable
+	ResultType    string   // Type used in .Get() call if present
 }
 
 // ExtractCalls finds all temporal workflow and activity calls within a function.
@@ -45,6 +50,8 @@ func (e *callExtractor) ExtractCalls(ctx context.Context, fn *ast.FuncDecl, file
 	}
 
 	var callSites []CallSite
+	// Track processed inner calls to avoid duplicates when handling chained .Get() calls
+	processedCalls := make(map[*ast.CallExpr]bool)
 
 	// Walk through the function body to find calls
 	ast.Inspect(fn.Body, func(n ast.Node) bool {
@@ -60,15 +67,31 @@ func (e *callExtractor) ExtractCalls(ctx context.Context, fn *ast.FuncDecl, file
 			return true
 		}
 
+		// Skip if already processed (inner call of a chained .Get())
+		if processedCalls[call] {
+			return true
+		}
+
+		// Check if this is a .Get() call with a Temporal call as receiver
+		if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+			if innerCall, isCall := sel.X.(*ast.CallExpr); isCall && sel.Sel.Name == "Get" {
+				// Mark inner call as processed to avoid duplicate
+				processedCalls[innerCall] = true
+			}
+		}
+
 		info := e.analyzeCall(call, filePath, nil)
 		if info != nil && info.TargetName != "" {
 			callSites = append(callSites, CallSite{
-				TargetName: info.TargetName,
-				TargetType: info.Type,
-				CallType:   info.Type,
-				LineNumber: info.LineNumber,
-				FilePath:   info.FilePath,
-				Options:    info.Options,
+				TargetName:    info.TargetName,
+				TargetType:    info.Type,
+				CallType:      info.Type,
+				LineNumber:    info.LineNumber,
+				FilePath:      info.FilePath,
+				Options:       info.Options,
+				ArgumentCount: info.ArgumentCount,
+				ArgumentTypes: info.ArgumentTypes,
+				ResultType:    info.ResultType,
 			})
 		}
 
@@ -140,12 +163,15 @@ func (e *callExtractor) ExtractAllTemporalInfo(ctx context.Context, fn *ast.Func
 		case "activity", "child_workflow", "local_activity":
 			if info.TargetName != "" {
 				details.CallSites = append(details.CallSites, CallSite{
-					TargetName: info.TargetName,
-					TargetType: info.Type,
-					CallType:   "execute",
-					LineNumber: info.LineNumber,
-					FilePath:   info.FilePath,
-					Options:    info.Options,
+					TargetName:    info.TargetName,
+					TargetType:    info.Type,
+					CallType:      "execute",
+					LineNumber:    info.LineNumber,
+					FilePath:      info.FilePath,
+					Options:       info.Options,
+					ArgumentCount: info.ArgumentCount,
+					ArgumentTypes: info.ArgumentTypes,
+					ResultType:    info.ResultType,
 				})
 			}
 		}
@@ -186,12 +212,28 @@ func (e *callExtractor) analyzeCall(call *ast.CallExpr, filePath string, fset *t
 		return nil
 	}
 
+	lineNum := e.getLineNumber(call, fset)
+
+	// Handle chained calls like workflow.ExecuteActivity(...).Get(ctx, &result)
+	if innerCall, ok := sel.X.(*ast.CallExpr); ok {
+		if sel.Sel.Name == "Get" {
+			// This is a .Get() call on a Future - analyze the inner call and extract result type
+			info := e.analyzeCall(innerCall, filePath, fset)
+			if info != nil {
+				// Extract result type from .Get(ctx, &result)
+				if len(call.Args) >= 2 {
+					info.ResultType = e.extractResultType(call.Args[1])
+				}
+				return info
+			}
+		}
+		return nil
+	}
+
 	ident, ok := sel.X.(*ast.Ident)
 	if !ok {
 		return nil
 	}
-
-	lineNum := e.getLineNumber(call, fset)
 
 	// Check if this is a workflow package call
 	if ident.Name == "workflow" {
@@ -357,33 +399,39 @@ func (e *callExtractor) isBoringCall(receiver, method string) bool {
 func (e *callExtractor) analyzeWorkflowCall(method string, call *ast.CallExpr, filePath string, lineNum int) *TemporalCallInfo {
 	switch method {
 	case "ExecuteActivity":
-		target := e.extractTemporalTarget(call)
+		target, argCount, argTypes := e.extractTemporalTargetWithArgs(call)
 		return &TemporalCallInfo{
-			Type:       "activity",
-			TargetName: target,
-			LineNumber: lineNum,
-			FilePath:   filepath.Base(filePath),
-			Options:    e.extractOptions(call),
+			Type:          "activity",
+			TargetName:    target,
+			LineNumber:    lineNum,
+			FilePath:      filepath.Base(filePath),
+			Options:       e.extractOptions(call),
+			ArgumentCount: argCount,
+			ArgumentTypes: argTypes,
 		}
 
 	case "ExecuteChildWorkflow":
-		target := e.extractTemporalTarget(call)
+		target, argCount, argTypes := e.extractTemporalTargetWithArgs(call)
 		return &TemporalCallInfo{
-			Type:       "child_workflow",
-			TargetName: target,
-			LineNumber: lineNum,
-			FilePath:   filepath.Base(filePath),
-			Options:    e.extractOptions(call),
+			Type:          "child_workflow",
+			TargetName:    target,
+			LineNumber:    lineNum,
+			FilePath:      filepath.Base(filePath),
+			Options:       e.extractOptions(call),
+			ArgumentCount: argCount,
+			ArgumentTypes: argTypes,
 		}
 
 	case "ExecuteLocalActivity":
-		target := e.extractTemporalTarget(call)
+		target, argCount, argTypes := e.extractTemporalTargetWithArgs(call)
 		return &TemporalCallInfo{
-			Type:       "local_activity",
-			TargetName: target,
-			LineNumber: lineNum,
-			FilePath:   filepath.Base(filePath),
-			Options:    e.extractOptions(call),
+			Type:          "local_activity",
+			TargetName:    target,
+			LineNumber:    lineNum,
+			FilePath:      filepath.Base(filePath),
+			Options:       e.extractOptions(call),
+			ArgumentCount: argCount,
+			ArgumentTypes: argTypes,
 		}
 
 	case "SetSignalHandler":
@@ -672,54 +720,123 @@ func (e *callExtractor) ExtractParameters(fn *ast.FuncDecl) map[string]string {
 	return params
 }
 
-// extractTemporalTarget extracts the target function name from a Temporal API call.
-func (e *callExtractor) extractTemporalTarget(call *ast.CallExpr) string {
-	if len(call.Args) == 0 {
-		return ""
+// extractTemporalTargetWithArgs extracts the target function name and argument info from a Temporal API call.
+// Returns: target name, argument count (excluding ctx and target func), argument types
+func (e *callExtractor) extractTemporalTargetWithArgs(call *ast.CallExpr) (string, int, []string) {
+	// In both patterns, the target is the second argument and activity/workflow args start at index 2:
+	// Pattern 1: ExecuteActivity(ctx, MyActivity, args...)
+	// Pattern 2: ExecuteActivity(workflow.WithActivityOptions(ctx, opts), MyActivity, args...)
+	if len(call.Args) < 2 {
+		return "", 0, nil
 	}
 
-	var targetArg ast.Expr
+	targetArg := call.Args[1]
+	argsStartIndex := 2
 
-	// Check if first argument is a call to workflow.WithActivityOptions
-	if len(call.Args) > 0 {
-		if firstCall, ok := call.Args[0].(*ast.CallExpr); ok {
-			if e.isWithOptionsCall(firstCall) {
-				// Pattern 2: target is second argument
-				if len(call.Args) > 1 {
-					targetArg = call.Args[1]
-				}
-			} else {
-				// Pattern 1: target is second argument (first is context)
-				if len(call.Args) > 1 {
-					targetArg = call.Args[1]
-				}
-			}
-		} else {
-			// Pattern 1: target is second argument (first is context)
-			if len(call.Args) > 1 {
-				targetArg = call.Args[1]
-			}
+	targetName := e.extractFunctionReference(targetArg)
+
+	// Count and extract types of remaining arguments
+	argCount := 0
+	var argTypes []string
+
+	if argsStartIndex < len(call.Args) {
+		argCount = len(call.Args) - argsStartIndex
+		for i := argsStartIndex; i < len(call.Args); i++ {
+			argType := e.inferExprType(call.Args[i])
+			argTypes = append(argTypes, argType)
 		}
 	}
 
-	if targetArg == nil {
-		return ""
-	}
-
-	return e.extractFunctionReference(targetArg)
+	return targetName, argCount, argTypes
 }
 
-// isWithOptionsCall checks if a call is workflow.WithActivityOptions or similar.
-func (e *callExtractor) isWithOptionsCall(call *ast.CallExpr) bool {
-	if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-		if ident, ok := sel.X.(*ast.Ident); ok {
-			return ident.Name == "workflow" &&
-				(sel.Sel.Name == "WithActivityOptions" ||
-					sel.Sel.Name == "WithChildWorkflowOptions" ||
-					sel.Sel.Name == "WithLocalActivityOptions")
+// inferExprType attempts to infer the type of an expression.
+// Returns a type hint or "unknown" if type cannot be determined.
+func (e *callExtractor) inferExprType(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.BasicLit:
+		// Literal values have obvious types
+		switch t.Kind.String() {
+		case "INT":
+			return "int"
+		case "FLOAT":
+			return "float64"
+		case "STRING":
+			return "string"
+		case "CHAR":
+			return "rune"
 		}
+	case *ast.Ident:
+		// Could be a variable or constant
+		// Check for common type names used as values
+		switch t.Name {
+		case "true", "false":
+			return "bool"
+		case "nil":
+			return "nil"
+		}
+		return "var:" + t.Name // Variable, type unknown
+	case *ast.SelectorExpr:
+		// pkg.Const or obj.Field
+		return "selector:" + e.exprToString(t)
+	case *ast.UnaryExpr:
+		// &x, *x, etc
+		if t.Op.String() == "&" {
+			innerType := e.inferExprType(t.X)
+			return "*" + innerType
+		}
+		return e.inferExprType(t.X)
+	case *ast.CompositeLit:
+		// Type{...} literal
+		if t.Type != nil {
+			return e.typeToString(t.Type)
+		}
+	case *ast.CallExpr:
+		// Function call result - type depends on function
+		return "call:" + e.exprToString(t.Fun)
 	}
-	return false
+	return "unknown"
+}
+
+// extractResultType extracts the type from a result pointer expression passed to .Get().
+// Handles patterns like: &result, result, &MyType{}
+func (e *callExtractor) extractResultType(expr ast.Expr) string {
+	switch t := expr.(type) {
+	case *ast.UnaryExpr:
+		// &result or &MyType{}
+		if t.Op.String() == "&" {
+			switch inner := t.X.(type) {
+			case *ast.Ident:
+				// &result - variable name, type unknown statically
+				return "var:" + inner.Name
+			case *ast.CompositeLit:
+				// &MyType{} - composite literal with explicit type
+				if inner.Type != nil {
+					return e.typeToString(inner.Type)
+				}
+			case *ast.IndexExpr:
+				// &slice[i] - indexed expression
+				return "indexed"
+			}
+		}
+	case *ast.Ident:
+		// result - variable (usually already a pointer)
+		return "var:" + t.Name
+	case *ast.CompositeLit:
+		// MyType{} - composite literal (rare in .Get() but handle it)
+		if t.Type != nil {
+			return e.typeToString(t.Type)
+		}
+	case *ast.CallExpr:
+		// new(MyType) pattern
+		if ident, ok := t.Fun.(*ast.Ident); ok && ident.Name == "new" {
+			if len(t.Args) > 0 {
+				return e.typeToString(t.Args[0])
+			}
+		}
+		return "call"
+	}
+	return "unknown"
 }
 
 // isLikelyTemporalFunction checks if a function name suggests it's a temporal function.
@@ -844,12 +961,15 @@ func (e *callExtractor) ExtractCallsWithFileSet(ctx context.Context, fn *ast.Fun
 		info := e.analyzeCall(call, filePath, fset)
 		if info != nil && info.TargetName != "" {
 			callSites = append(callSites, CallSite{
-				TargetName: info.TargetName,
-				TargetType: info.Type,
-				CallType:   info.Type,
-				LineNumber: info.LineNumber,
-				FilePath:   info.FilePath,
-				Options:    info.Options,
+				TargetName:    info.TargetName,
+				TargetType:    info.Type,
+				CallType:      info.Type,
+				LineNumber:    info.LineNumber,
+				FilePath:      info.FilePath,
+				Options:       info.Options,
+				ArgumentCount: info.ArgumentCount,
+				ArgumentTypes: info.ArgumentTypes,
+				ResultType:    info.ResultType,
 			})
 		}
 
