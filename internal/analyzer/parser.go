@@ -16,7 +16,8 @@ import (
 
 // goParser implements the Parser interface.
 type goParser struct {
-	logger *slog.Logger
+	logger           *slog.Logger
+	registrationInfo *RegistrationInfo // Populated during ParseDirectory
 }
 
 // NewParser creates a new Parser instance.
@@ -28,12 +29,26 @@ func NewParser(logger *slog.Logger) Parser {
 
 // ParseDirectory recursively parses all Go files in the given directory.
 func (p *goParser) ParseDirectory(ctx context.Context, rootDir string, opts config.AnalysisOptions) ([]NodeMatch, error) {
+	// First pass: scan for worker.Register* calls to identify registered activities/workflows
+	scanner := NewRegistrationScanner(p.logger)
+	regInfo, err := scanner.ScanDirectory(ctx, rootDir, opts)
+	if err != nil {
+		p.logger.Warn("Failed to scan for registrations", "error", err)
+		// Continue without registration info
+		regInfo = &RegistrationInfo{
+			Activities:      make(map[string]*Registration),
+			Workflows:       make(map[string]*Registration),
+			RegisteredTypes: make(map[string]string),
+		}
+	}
+	p.registrationInfo = regInfo
+
 	var matches []NodeMatch
 
 	// Create file set for tracking position information
 	fset := token.NewFileSet()
 
-	err := filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
+	err = filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			p.logger.Warn("Error accessing path", "path", path, "error", err)
 			return nil // Continue walking
@@ -143,11 +158,24 @@ func (p *goParser) classifyFunction(fn *ast.FuncDecl) string {
 
 	// Classification is based on reliable detection methods only:
 	// 1. workflow.Context parameter + workflow SDK calls = workflow
-	// 2. Registration via worker.RegisterActivity/RegisterWorkflow (TODO: implement)
+	// 2. Registration via worker.RegisterActivity/RegisterWorkflow
 	// 3. Usage via ExecuteActivity, SetSignalHandler, etc. (tracked as call targets)
 	//
 	// We deliberately do NOT use name-based detection (e.g., *Activity, *Workflow suffixes)
 	// because it's too flaky and produces false positives.
+
+	funcName := fn.Name.Name
+	receiverType := p.extractReceiverTypeName(fn)
+
+	// Check if registered as a workflow
+	if p.registrationInfo != nil && p.registrationInfo.IsRegisteredWorkflow(funcName) {
+		return "workflow"
+	}
+
+	// Check if registered as an activity (direct registration or via struct type)
+	if p.registrationInfo != nil && p.registrationInfo.IsRegisteredActivity(funcName, receiverType) {
+		return "activity"
+	}
 
 	// Check based on first parameter type (workflow.Context indicates a workflow)
 	if fn.Type.Params != nil && len(fn.Type.Params.List) > 0 {
@@ -175,6 +203,25 @@ func (p *goParser) classifyFunction(fn *ast.FuncDecl) string {
 		}
 	}
 
+	return ""
+}
+
+// extractReceiverTypeName extracts the receiver type name from a method declaration.
+// Returns empty string for regular functions.
+func (p *goParser) extractReceiverTypeName(fn *ast.FuncDecl) string {
+	if fn.Recv == nil || len(fn.Recv.List) == 0 {
+		return ""
+	}
+
+	recv := fn.Recv.List[0]
+	switch t := recv.Type.(type) {
+	case *ast.Ident:
+		return t.Name
+	case *ast.StarExpr:
+		if ident, ok := t.X.(*ast.Ident); ok {
+			return ident.Name
+		}
+	}
 	return ""
 }
 
