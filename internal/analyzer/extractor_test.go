@@ -823,3 +823,491 @@ func MyWorkflow(ctx workflow.Context) error {
 	}
 	t.Fatal("Function MyWorkflow not found")
 }
+
+func TestExtractActivityOptions(t *testing.T) {
+	code := `package test
+
+import "go.temporal.io/sdk/workflow"
+
+func MyWorkflow(ctx workflow.Context) error {
+	ao := workflow.ActivityOptions{
+		StartToCloseTimeout: 10 * time.Minute,
+		RetryPolicy: &temporal.RetryPolicy{
+			InitialInterval:    time.Second,
+			BackoffCoefficient: 2.0,
+			MaximumInterval:    time.Minute,
+			MaximumAttempts:    3,
+		},
+	}
+	ctx = workflow.WithActivityOptions(ctx, ao)
+	workflow.ExecuteActivity(ctx, MyActivity)
+	return nil
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", code, 0)
+	if err != nil {
+		t.Fatalf("Failed to parse code: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	e := NewCallExtractor(logger)
+
+	ctx := context.Background()
+
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "MyWorkflow" {
+			calls, err := e.ExtractCalls(ctx, fn, "test.go")
+			if err != nil {
+				t.Fatalf("ExtractCalls failed: %v", err)
+			}
+			// The activity call should be found
+			if len(calls) == 0 {
+				t.Error("Expected to find at least one call")
+			}
+			return
+		}
+	}
+	t.Fatal("Function MyWorkflow not found")
+}
+
+func TestExtractActivityOptionsWithInlineOptions(t *testing.T) {
+	code := `package test
+
+import "go.temporal.io/sdk/workflow"
+
+func MyWorkflow(ctx workflow.Context) error {
+	workflow.ExecuteActivity(
+		workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			StartToCloseTimeout: time.Hour,
+			HeartbeatTimeout:    time.Minute,
+			RetryPolicy: &temporal.RetryPolicy{
+				MaximumAttempts: 5,
+			},
+		}),
+		MyActivity,
+	)
+	return nil
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", code, 0)
+	if err != nil {
+		t.Fatalf("Failed to parse code: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	e := NewCallExtractor(logger)
+
+	ctx := context.Background()
+
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "MyWorkflow" {
+			calls, err := e.ExtractCalls(ctx, fn, "test.go")
+			if err != nil {
+				t.Fatalf("ExtractCalls failed: %v", err)
+			}
+
+			for _, call := range calls {
+				if call.TargetName == "MyActivity" {
+					if call.ParsedActivityOpts == nil {
+						t.Error("Expected ParsedActivityOpts to be set")
+						return
+					}
+					if call.ParsedActivityOpts.StartToCloseTimeout == "" {
+						t.Error("Expected StartToCloseTimeout to be parsed")
+					}
+					if call.ParsedActivityOpts.HeartbeatTimeout == "" {
+						t.Error("Expected HeartbeatTimeout to be parsed")
+					}
+					if !call.ParsedActivityOpts.HasRetryPolicy() {
+						t.Error("Expected RetryPolicy to be detected")
+					}
+					return
+				}
+			}
+			t.Error("Expected to find MyActivity call")
+			return
+		}
+	}
+	t.Fatal("Function MyWorkflow not found")
+}
+
+func TestExtractActivityOptionsWithPointer(t *testing.T) {
+	code := `package test
+
+import "go.temporal.io/sdk/workflow"
+
+func MyWorkflow(ctx workflow.Context) error {
+	workflow.ExecuteActivity(
+		workflow.WithActivityOptions(ctx, &workflow.ActivityOptions{
+			ScheduleToCloseTimeout: time.Hour,
+		}),
+		MyActivity,
+	)
+	return nil
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", code, 0)
+	if err != nil {
+		t.Fatalf("Failed to parse code: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	e := NewCallExtractor(logger)
+
+	ctx := context.Background()
+
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "MyWorkflow" {
+			calls, err := e.ExtractCalls(ctx, fn, "test.go")
+			if err != nil {
+				t.Fatalf("ExtractCalls failed: %v", err)
+			}
+
+			for _, call := range calls {
+				if call.TargetName == "MyActivity" {
+					if call.ParsedActivityOpts == nil {
+						t.Error("Expected ParsedActivityOpts to be set for pointer type")
+						return
+					}
+					if call.ParsedActivityOpts.ScheduleToCloseTimeout == "" {
+						t.Error("Expected ScheduleToCloseTimeout to be parsed")
+					}
+					return
+				}
+			}
+			t.Error("Expected to find MyActivity call")
+			return
+		}
+	}
+	t.Fatal("Function MyWorkflow not found")
+}
+
+func TestExtractActivityOptionsWithVariable(t *testing.T) {
+	code := `package test
+
+import "go.temporal.io/sdk/workflow"
+
+func MyWorkflow(ctx workflow.Context) error {
+	workflow.ExecuteActivity(
+		workflow.WithActivityOptions(ctx, opts),
+		MyActivity,
+	)
+	return nil
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", code, 0)
+	if err != nil {
+		t.Fatalf("Failed to parse code: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	e := NewCallExtractor(logger)
+
+	ctx := context.Background()
+
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "MyWorkflow" {
+			calls, err := e.ExtractCalls(ctx, fn, "test.go")
+			if err != nil {
+				t.Fatalf("ExtractCalls failed: %v", err)
+			}
+
+			for _, call := range calls {
+				if call.TargetName == "MyActivity" {
+					if call.ParsedActivityOpts == nil {
+						t.Error("Expected ParsedActivityOpts to be set for variable reference")
+						return
+					}
+					// When options are a variable, we can't parse details but should mark as provided
+					if !call.ParsedActivityOpts.OptionsProvided() {
+						t.Error("Expected OptionsProvided to be true for variable reference")
+					}
+					return
+				}
+			}
+			t.Error("Expected to find MyActivity call")
+			return
+		}
+	}
+	t.Fatal("Function MyWorkflow not found")
+}
+
+func TestExtractLocalActivityOptions(t *testing.T) {
+	code := `package test
+
+import "go.temporal.io/sdk/workflow"
+
+func MyWorkflow(ctx workflow.Context) error {
+	workflow.ExecuteLocalActivity(
+		workflow.WithLocalActivityOptions(ctx, workflow.LocalActivityOptions{
+			StartToCloseTimeout: time.Minute,
+		}),
+		MyLocalActivity,
+	)
+	return nil
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", code, 0)
+	if err != nil {
+		t.Fatalf("Failed to parse code: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	e := NewCallExtractor(logger)
+
+	ctx := context.Background()
+
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "MyWorkflow" {
+			calls, err := e.ExtractCalls(ctx, fn, "test.go")
+			if err != nil {
+				t.Fatalf("ExtractCalls failed: %v", err)
+			}
+
+			for _, call := range calls {
+				if call.TargetName == "MyLocalActivity" {
+					if call.ParsedActivityOpts == nil {
+						t.Error("Expected ParsedActivityOpts to be set for local activity")
+						return
+					}
+					return
+				}
+			}
+			t.Error("Expected to find MyLocalActivity call")
+			return
+		}
+	}
+	t.Fatal("Function MyWorkflow not found")
+}
+
+func TestParseRetryPolicyWithVariableReference(t *testing.T) {
+	code := `package test
+
+import "go.temporal.io/sdk/workflow"
+
+func MyWorkflow(ctx workflow.Context) error {
+	workflow.ExecuteActivity(
+		workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			RetryPolicy: myRetryPolicy,
+		}),
+		MyActivity,
+	)
+	return nil
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", code, 0)
+	if err != nil {
+		t.Fatalf("Failed to parse code: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	e := NewCallExtractor(logger)
+
+	ctx := context.Background()
+
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "MyWorkflow" {
+			calls, err := e.ExtractCalls(ctx, fn, "test.go")
+			if err != nil {
+				t.Fatalf("ExtractCalls failed: %v", err)
+			}
+
+			for _, call := range calls {
+				if call.TargetName == "MyActivity" {
+					if call.ParsedActivityOpts == nil {
+						t.Error("Expected ParsedActivityOpts to be set")
+						return
+					}
+					// When RetryPolicy is a variable, it should still be detected as present
+					if !call.ParsedActivityOpts.HasRetryPolicy() {
+						t.Error("Expected RetryPolicy to be detected even as variable reference")
+					}
+					return
+				}
+			}
+			t.Error("Expected to find MyActivity call")
+			return
+		}
+	}
+	t.Fatal("Function MyWorkflow not found")
+}
+
+func TestParseActivityOptionsAllTimeouts(t *testing.T) {
+	code := `package test
+
+import "go.temporal.io/sdk/workflow"
+
+func MyWorkflow(ctx workflow.Context) error {
+	workflow.ExecuteActivity(
+		workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			StartToCloseTimeout:    10 * time.Minute,
+			ScheduleToCloseTimeout: 30 * time.Minute,
+			ScheduleToStartTimeout: 5 * time.Minute,
+			HeartbeatTimeout:       time.Minute,
+		}),
+		MyActivity,
+	)
+	return nil
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", code, 0)
+	if err != nil {
+		t.Fatalf("Failed to parse code: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	e := NewCallExtractor(logger)
+
+	ctx := context.Background()
+
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "MyWorkflow" {
+			calls, err := e.ExtractCalls(ctx, fn, "test.go")
+			if err != nil {
+				t.Fatalf("ExtractCalls failed: %v", err)
+			}
+
+			for _, call := range calls {
+				if call.TargetName == "MyActivity" {
+					opts := call.ParsedActivityOpts
+					if opts == nil {
+						t.Fatal("Expected ParsedActivityOpts to be set")
+					}
+					if opts.StartToCloseTimeout == "" {
+						t.Error("Expected StartToCloseTimeout to be parsed")
+					}
+					if opts.ScheduleToCloseTimeout == "" {
+						t.Error("Expected ScheduleToCloseTimeout to be parsed")
+					}
+					if opts.ScheduleToStartTimeout == "" {
+						t.Error("Expected ScheduleToStartTimeout to be parsed")
+					}
+					if opts.HeartbeatTimeout == "" {
+						t.Error("Expected HeartbeatTimeout to be parsed")
+					}
+					return
+				}
+			}
+			t.Error("Expected to find MyActivity call")
+			return
+		}
+	}
+	t.Fatal("Function MyWorkflow not found")
+}
+
+func TestParseRetryPolicyAllFields(t *testing.T) {
+	code := `package test
+
+import "go.temporal.io/sdk/workflow"
+
+func MyWorkflow(ctx workflow.Context) error {
+	workflow.ExecuteActivity(
+		workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			RetryPolicy: &temporal.RetryPolicy{
+				InitialInterval:    time.Second,
+				BackoffCoefficient: 2.5,
+				MaximumInterval:    5 * time.Minute,
+				MaximumAttempts:    10,
+			},
+		}),
+		MyActivity,
+	)
+	return nil
+}
+`
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, "test.go", code, 0)
+	if err != nil {
+		t.Fatalf("Failed to parse code: %v", err)
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	e := NewCallExtractor(logger)
+
+	ctx := context.Background()
+
+	for _, decl := range file.Decls {
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == "MyWorkflow" {
+			calls, err := e.ExtractCalls(ctx, fn, "test.go")
+			if err != nil {
+				t.Fatalf("ExtractCalls failed: %v", err)
+			}
+
+			for _, call := range calls {
+				if call.TargetName == "MyActivity" {
+					opts := call.ParsedActivityOpts
+					if opts == nil {
+						t.Fatal("Expected ParsedActivityOpts to be set")
+					}
+					rp := opts.RetryPolicy
+					if rp == nil {
+						t.Fatal("Expected RetryPolicy to be set")
+					}
+					if rp.InitialInterval == "" {
+						t.Error("Expected InitialInterval to be parsed")
+					}
+					if rp.BackoffCoefficient == "" {
+						t.Error("Expected BackoffCoefficient to be parsed")
+					}
+					if rp.MaximumInterval == "" {
+						t.Error("Expected MaximumInterval to be parsed")
+					}
+					if rp.MaximumAttempts != 10 {
+						t.Errorf("Expected MaximumAttempts = 10, got %d", rp.MaximumAttempts)
+					}
+					return
+				}
+			}
+			t.Error("Expected to find MyActivity call")
+			return
+		}
+	}
+	t.Fatal("Function MyWorkflow not found")
+}
+
+func TestActivityOptionsHelperMethods(t *testing.T) {
+	// Test nil ActivityOptions
+	var nilOpts *ActivityOptions
+	if nilOpts.OptionsProvided() {
+		t.Error("nil ActivityOptions should return false for OptionsProvided")
+	}
+	if nilOpts.HasRetryPolicy() {
+		t.Error("nil ActivityOptions should return false for HasRetryPolicy")
+	}
+
+	// Test empty ActivityOptions
+	emptyOpts := &ActivityOptions{}
+	if emptyOpts.OptionsProvided() {
+		t.Error("empty ActivityOptions should return false for OptionsProvided")
+	}
+	if emptyOpts.HasRetryPolicy() {
+		t.Error("empty ActivityOptions should return false for HasRetryPolicy")
+	}
+
+	// Test with RetryPolicy having values
+	optsWithRP := &ActivityOptions{
+		RetryPolicy: &RetryPolicy{
+			MaximumAttempts: 3,
+		},
+	}
+	if !optsWithRP.HasRetryPolicy() {
+		t.Error("ActivityOptions with RetryPolicy.MaximumAttempts should return true for HasRetryPolicy")
+	}
+
+	// Test with RetryPolicy having BackoffCoefficient
+	optsWithBackoff := &ActivityOptions{
+		RetryPolicy: &RetryPolicy{
+			BackoffCoefficient: "2.0",
+		},
+	}
+	if !optsWithBackoff.HasRetryPolicy() {
+		t.Error("ActivityOptions with RetryPolicy.BackoffCoefficient should return true for HasRetryPolicy")
+	}
+}
