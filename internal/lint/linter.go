@@ -21,6 +21,12 @@ type Config struct {
 	MaxIssues int
 	// CustomThresholds allows overriding default rule thresholds
 	Thresholds Thresholds
+
+	// LLM enhancement options
+	LLMEnhance bool   // Use LLM to generate context-aware code fixes
+	LLMVerify  bool   // Use LLM to verify/filter findings
+	LLMModel   string // Override OpenAI model (default: gpt-4o-mini)
+	RootDir    string // Project root for file reading
 }
 
 // Thresholds contains configurable thresholds for various rules.
@@ -87,6 +93,7 @@ func (r *Result) Summary() string {
 type Linter struct {
 	config *Config
 	rules  []Rule
+	llm    *LLMEnhancer
 }
 
 // NewLinter creates a new linter with the given configuration.
@@ -100,6 +107,16 @@ func NewLinter(cfg *Config) *Linter {
 		rules:  make([]Rule, 0),
 	}
 
+	// Initialize LLM enhancer if enabled
+	if cfg.LLMEnhance || cfg.LLMVerify {
+		llmCfg := DefaultLLMConfig()
+		if cfg.LLMModel != "" {
+			llmCfg.Model = cfg.LLMModel
+		}
+		llmCfg.RootDir = cfg.RootDir
+		l.llm = NewLLMEnhancer(llmCfg)
+	}
+
 	// Register all rules
 	l.registerRules()
 
@@ -108,26 +125,28 @@ func NewLinter(cfg *Config) *Linter {
 
 // registerRules registers all available lint rules.
 func (l *Linter) registerRules() {
-	// Best Practice Rules
-	l.rules = append(l.rules, &ActivityWithoutRetryRule{})
+	// Reliability Rules (TA001-TA004)
+	l.rules = append(l.rules, &ActivityUnlimitedRetryRule{})
 	l.rules = append(l.rules, &ActivityWithoutTimeoutRule{})
 	l.rules = append(l.rules, &LongRunningActivityWithoutHeartbeatRule{})
+	l.rules = append(l.rules, &ChildWorkflowUnlimitedRetryRule{})
 
-	// Reliability Rules
+	// Structural Rules (TA010-TA011)
 	l.rules = append(l.rules, &CircularDependencyRule{})
 	l.rules = append(l.rules, &OrphanNodeRule{})
-	l.rules = append(l.rules, &SignalWithoutHandlerRule{})
 
-	// Performance Rules
+	// Performance Rules (TA020-TA021)
 	l.rules = append(l.rules, NewHighFanOutRule(l.config.Thresholds.MaxFanOut))
 	l.rules = append(l.rules, NewDeepCallChainRule(l.config.Thresholds.MaxCallDepth))
 
-	// Maintenance Rules
+	// Maintenance Rules (TA030-TA034)
 	l.rules = append(l.rules, NewWorkflowWithoutVersioningRule(l.config.Thresholds.VersioningRequired))
+	l.rules = append(l.rules, &SignalWithoutHandlerRule{})
 	l.rules = append(l.rules, &QueryWithoutReturnRule{})
 	l.rules = append(l.rules, &ContinueAsNewWithoutConditionRule{})
+	l.rules = append(l.rules, &ConsiderQueryHandlerRule{})
 
-	// Type Safety Rules
+	// Type Safety Rules (TA040+)
 	l.rules = append(l.rules, &ArgumentsMismatchRule{})
 }
 
@@ -165,6 +184,9 @@ func (l *Linter) Run(ctx context.Context, graph *analyzer.TemporalGraph) *Result
 		TotalNodes: len(graph.Nodes),
 	}
 
+	// Collect all issues from rules first
+	var allIssues []Issue
+
 	// Execute each enabled rule
 	for _, rule := range l.rules {
 		select {
@@ -182,25 +204,30 @@ func (l *Linter) Run(ctx context.Context, graph *analyzer.TemporalGraph) *Result
 			if !l.shouldReport(issue) {
 				continue
 			}
+			allIssues = append(allIssues, issue)
+		}
+	}
 
-			result.Issues = append(result.Issues, issue)
+	// Apply LLM verification and/or fix enhancement if enabled
+	if l.llm != nil && l.llm.IsEnabled() && (l.config.LLMVerify || l.config.LLMEnhance) {
+		allIssues, _ = l.llm.EnhanceIssues(ctx, allIssues, graph, l.config.LLMVerify, l.config.LLMEnhance)
+	}
 
-			// Count by severity
-			switch issue.Severity {
-			case SeverityError:
-				result.ErrorCount++
-			case SeverityWarning:
-				result.WarnCount++
-			case SeverityInfo:
-				result.InfoCount++
-			}
+	// Count and limit issues
+	for _, issue := range allIssues {
+		result.Issues = append(result.Issues, issue)
 
-			// Check max issues limit
-			if l.config.MaxIssues > 0 && len(result.Issues) >= l.config.MaxIssues {
-				break
-			}
+		// Count by severity
+		switch issue.Severity {
+		case SeverityError:
+			result.ErrorCount++
+		case SeverityWarning:
+			result.WarnCount++
+		case SeverityInfo:
+			result.InfoCount++
 		}
 
+		// Check max issues limit
 		if l.config.MaxIssues > 0 && len(result.Issues) >= l.config.MaxIssues {
 			break
 		}
@@ -252,4 +279,5 @@ type RuleInfo struct {
 	Description string   `json:"description"`
 	Enabled     bool     `json:"enabled"`
 }
+
 

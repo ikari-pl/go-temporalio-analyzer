@@ -33,9 +33,10 @@ type Config struct {
 	DebugView string `json:"debug_view,omitempty"` // "list", "tree", "details" - render single view and exit
 
 	// Lint options
-	LintMode          bool   `json:"lint_mode"`           // Enable lint mode for CI
-	LintFormat        string `json:"lint_format"`         // "text", "json", "github", "sarif", "checkstyle"
-	LintStrict        bool   `json:"lint_strict"`         // Treat warnings as errors
+	LintMode          bool     `json:"lint_mode"`           // Enable lint mode for CI
+	LintFormat        string   `json:"lint_format"`         // "text", "json", "github", "sarif", "checkstyle" (comma-separated for multiple)
+	LintFormats       []string `json:"-"`                   // Parsed list of formats
+	LintStrict        bool     `json:"lint_strict"`         // Treat warnings as errors
 	LintMinSeverity   string `json:"lint_min_severity"`   // "error", "warning", "info"
 	LintDisabledRules string `json:"lint_disabled_rules"` // Comma-separated rule IDs to disable
 	LintEnabledRules  string `json:"lint_enabled_rules"`  // Comma-separated rule IDs to enable (exclusive)
@@ -44,6 +45,11 @@ type Config struct {
 	// Lint thresholds
 	LintMaxFanOut    int `json:"lint_max_fan_out"`    // Max allowed fan-out before warning
 	LintMaxCallDepth int `json:"lint_max_call_depth"` // Max call chain depth before warning
+
+	// LLM enhancement options
+	LLMEnhance bool   `json:"llm_enhance"` // Use LLM to generate context-aware fixes
+	LLMVerify  bool   `json:"llm_verify"`  // Use LLM to verify/filter findings
+	LLMModel   string `json:"llm_model"`   // Override OpenAI model (default: gpt-4o-mini)
 }
 
 // NewConfig creates a new configuration with default values.
@@ -69,6 +75,11 @@ func NewConfig() *Config {
 		LintListRules:     false,
 		LintMaxFanOut:     15,
 		LintMaxCallDepth:  10,
+
+		// LLM defaults
+		LLMEnhance: false,
+		LLMVerify:  false,
+		LLMModel:   "", // Empty means use default (gpt-4o-mini)
 	}
 }
 
@@ -109,6 +120,11 @@ func (c *Config) ParseFlags() error {
 	fs.BoolVar(&c.LintListRules, "lint-rules", c.LintListRules, "List all available lint rules and exit")
 	fs.IntVar(&c.LintMaxFanOut, "lint-max-fan-out", c.LintMaxFanOut, "Max fan-out before warning (default: 15)")
 	fs.IntVar(&c.LintMaxCallDepth, "lint-max-depth", c.LintMaxCallDepth, "Max call chain depth before warning (default: 10)")
+
+	// LLM enhancement flags
+	fs.BoolVar(&c.LLMEnhance, "llm-enhance", c.LLMEnhance, "Use LLM to generate context-aware code fixes (requires OPENAI_API_KEY)")
+	fs.BoolVar(&c.LLMVerify, "llm-verify", c.LLMVerify, "Use LLM to verify findings and reduce false positives (requires OPENAI_API_KEY)")
+	fs.StringVar(&c.LLMModel, "llm-model", c.LLMModel, "Override OpenAI model (default: gpt-4o-mini)")
 
 	// Custom usage message
 	fs.Usage = func() {
@@ -166,6 +182,7 @@ func extractPositionalPath(args []string) ([]string, string) {
 		"-lint-enable": true, "--lint-enable": true,
 		"-lint-max-fan-out": true, "--lint-max-fan-out": true,
 		"-lint-max-depth": true, "--lint-max-depth": true,
+		"-llm-model": true, "--llm-model": true,
 	}
 
 	// Pre-allocate with capacity hint for efficiency
@@ -263,8 +280,21 @@ func (c *Config) Validate() error {
 			"sarif":         true,
 			"checkstyle":    true,
 		}
-		if !validLintFormats[c.LintFormat] {
-			return fmt.Errorf("invalid lint format: %s (valid: text, json, github, sarif, checkstyle)", c.LintFormat)
+
+		// Parse comma-separated formats
+		c.LintFormats = nil
+		for _, f := range strings.Split(c.LintFormat, ",") {
+			f = strings.TrimSpace(f)
+			if f == "" {
+				continue
+			}
+			if !validLintFormats[f] {
+				return fmt.Errorf("invalid lint format: %s (valid: text, json, github, sarif, checkstyle)", f)
+			}
+			c.LintFormats = append(c.LintFormats, f)
+		}
+		if len(c.LintFormats) == 0 {
+			c.LintFormats = []string{"text"}
 		}
 
 		validSeverities := map[string]bool{
@@ -302,6 +332,22 @@ func (c *Config) GetLintEnabledRules() []string {
 		rules[i] = strings.TrimSpace(rules[i])
 	}
 	return rules
+}
+
+// GetLintFormatExtension returns the file extension for a lint format.
+func GetLintFormatExtension(format string) string {
+	switch format {
+	case "json":
+		return ".json"
+	case "sarif":
+		return ".sarif"
+	case "checkstyle":
+		return ".xml"
+	case "github":
+		return ".txt" // GitHub annotations are text-based
+	default:
+		return ".txt"
+	}
 }
 
 // ToAnalysisOptions converts the config to analyzer options.

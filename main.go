@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ikari-pl/go-temporalio-analyzer/internal/analyzer"
@@ -264,7 +265,9 @@ func runLint(cfg *config.Config, logger *slog.Logger, analyzerInstance analyzer.
 	logger.Info("Starting temporal analyzer in lint mode",
 		"root_dir", cfg.RootDir,
 		"format", cfg.LintFormat,
-		"strict", cfg.LintStrict)
+		"strict", cfg.LintStrict,
+		"llm_enhance", cfg.LLMEnhance,
+		"llm_verify", cfg.LLMVerify)
 
 	// Create analysis options
 	opts := cfg.ToAnalysisOptions()
@@ -297,30 +300,64 @@ func runLint(cfg *config.Config, logger *slog.Logger, analyzerInstance analyzer.
 			MaxCallDepth:       cfg.LintMaxCallDepth,
 			VersioningRequired: 5,
 		},
+		// LLM enhancement options
+		LLMEnhance: cfg.LLMEnhance,
+		LLMVerify:  cfg.LLMVerify,
+		LLMModel:   cfg.LLMModel,
+		RootDir:    cfg.RootDir,
 	}
 
 	// Create linter and run
 	linter := lint.NewLinter(lintCfg)
 	result := linter.Run(ctx, graph)
 
-	// Format and output results
-	formatter := lint.NewFormatter(cfg.LintFormat)
-
-	// Determine output destination
-	out := os.Stdout
-	if cfg.OutputFile != "" {
-		f, err := os.Create(cfg.OutputFile)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error creating output file: %v\n", err)
-			return 2
-		}
-		defer func() { _ = f.Close() }()
-		out = f
+	// Output results in all requested formats
+	formats := cfg.LintFormats
+	if len(formats) == 0 {
+		formats = []string{cfg.LintFormat}
 	}
 
-	if err := formatter.Format(result, out); err != nil {
-		fmt.Fprintf(os.Stderr, "Error formatting results: %v\n", err)
-		return 2
+	for i, format := range formats {
+		formatter := lint.NewFormatter(format)
+
+		// Determine output destination for this format
+		var out *os.File
+		var outputPath string
+
+		if i == 0 {
+			// First format goes to stdout or the specified output file
+			if cfg.OutputFile != "" {
+				outputPath = cfg.OutputFile
+			}
+		} else {
+			// Additional formats go to auto-generated files
+			baseName := "lint-results"
+			if cfg.OutputFile != "" {
+				baseName = strings.TrimSuffix(filepath.Base(cfg.OutputFile), filepath.Ext(cfg.OutputFile))
+			}
+			outputPath = baseName + config.GetLintFormatExtension(format)
+		}
+
+		if outputPath != "" {
+			f, err := os.Create(outputPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error creating output file %s: %v\n", outputPath, err)
+				return 2
+			}
+			out = f
+			defer func(f *os.File) { _ = f.Close() }(f)
+
+			if len(formats) > 1 {
+				logger.Info("Writing output", "format", format, "file", outputPath)
+			}
+		} else {
+			out = os.Stdout
+		}
+
+		if err := formatter.Format(result, out); err != nil {
+			fmt.Fprintf(os.Stderr, "Error formatting results as %s: %v\n", format, err)
+			return 2
+		}
 	}
 
 	return result.ExitCode

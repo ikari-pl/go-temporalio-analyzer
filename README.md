@@ -168,6 +168,13 @@ temporal-analyzer --lint --lint-format github    # GitHub Actions annotations
 temporal-analyzer --lint --lint-format sarif     # SARIF format (GitHub Code Scanning)
 temporal-analyzer --lint --lint-format checkstyle # Checkstyle XML
 
+# Multiple formats in one run (comma-separated)
+temporal-analyzer --lint --lint-format github,sarif
+# github → stdout, sarif → lint-results.sarif
+
+temporal-analyzer --lint --lint-format github,sarif --output report.txt
+# github → report.txt, sarif → report.sarif
+
 # Disable specific rules
 temporal-analyzer --lint --lint-disable TA001,TA002
 
@@ -184,6 +191,38 @@ temporal-analyzer --lint --lint-max-fan-out 20 --lint-max-depth 15
 temporal-analyzer --lint --lint-format sarif --output results.sarif
 ```
 
+#### LLM-Enhanced Analysis (Experimental)
+
+When `OPENAI_API_KEY` is set, the linter can use OpenAI to improve findings:
+
+```bash
+# Verify findings to reduce false positives
+export OPENAI_API_KEY="sk-..."
+temporal-analyzer --lint --llm-verify
+
+# Generate context-aware code fixes matching your project's style
+temporal-analyzer --lint --llm-enhance
+
+# Both verification and enhancement
+temporal-analyzer --lint --llm-verify --llm-enhance
+
+# Use a different model (default: gpt-4o-mini)
+temporal-analyzer --lint --llm-enhance --llm-model gpt-4o
+```
+
+**How LLM enhancement works:**
+
+1. **Verification (`--llm-verify`)**: For each finding, the LLM analyzes the surrounding code context to determine if it's a real issue or false positive. Findings marked as false positives with high confidence are filtered out.
+
+2. **Fix Enhancement (`--llm-enhance`)**: For findings with suggested fixes, the LLM generates code that matches your project's existing patterns and style, using actual source code context.
+
+**Environment variables:**
+- `OPENAI_API_KEY`: Required for LLM features
+- `OPENAI_BASE_URL`: Override API endpoint (default: `https://api.openai.com/v1`)
+- `OPENAI_MODEL`: Override model (default: `gpt-4o-mini`)
+
+**Note:** LLM features require API calls which add latency and cost. Use them selectively (e.g., in CI for PRs, not on every commit).
+
 #### GitHub Actions Example
 
 ```yaml
@@ -195,26 +234,77 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.25'
-      
+
       - name: Install Temporal Analyzer
         run: go install github.com/ikari-pl/go-temporalio-analyzer@latest
-      
+
       - name: Run Lint
         run: temporal-analyzer --lint --lint-format github --lint-strict .
 ```
+
+#### GitHub Actions with LLM Enhancement (for PRs)
+
+```yaml
+name: Temporal Workflow Analysis (Enhanced)
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  lint-enhanced:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+
+      - name: Install Temporal Analyzer
+        run: go install github.com/ikari-pl/go-temporalio-analyzer@latest
+
+      - name: Run Enhanced Lint
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          temporal-analyzer --lint --lint-format sarif \
+            --llm-verify --llm-enhance \
+            --output temporal-report.sarif .
+
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: temporal-report.sarif
+```
+
+#### Important: Temporal SDK Default Values
+
+Before understanding the lint rules, it's crucial to know Temporal's default behaviors:
+
+| Option | Default Value | Notes |
+|--------|---------------|-------|
+| **Activity RetryPolicy** | **UNLIMITED retries** | InitialInterval=1s, BackoffCoefficient=2.0, MaximumInterval=100s, MaximumAttempts=0 (unlimited) |
+| **Activity Timeout** | **None** | Must specify StartToCloseTimeout OR ScheduleToCloseTimeout |
+| **Activity HeartbeatTimeout** | **Disabled** | No heartbeat monitoring unless explicitly set |
+| **ChildWorkflow RetryPolicy** | **UNLIMITED retries** | Does NOT inherit from parent - gets server defaults |
+| **ChildWorkflow Timeout** | **None** | No timeout unless WorkflowExecutionTimeout is set |
+
+**Key insight**: `RetryPolicy: nil` does NOT mean "no retries" - it means "use server defaults (UNLIMITED retries)". Only explicit `MaximumAttempts: 1` or a disabled retry policy actually stops retries.
 
 #### Available Lint Rules
 
 | ID | Name | Severity | Description | Fix |
 |----|------|----------|-------------|-----|
-| TA001 | activity-without-retry | warning | Transient failures (network, restarts) become permanent failures without retries | ✅ |
+| TA001 | activity-unlimited-retry | warning | Activities have UNLIMITED retries by default - may cause duplicate processing for non-idempotent operations | ✅ |
 | TA002 | activity-without-timeout | error | Hung activities block workflows forever, wasting resources | ✅ |
-| TA003 | long-activity-without-heartbeat | warning | Worker crashes (OOMKill, scale-down) cause slow retries without heartbeats | ✅ |
+| TA003 | long-activity-without-heartbeat | warning | Worker crashes (OOMKill, scale-down) cause slow retries without heartbeats. Use goroutine heartbeats! | ✅ |
+| TA004 | child-workflow-unlimited-retry | warning | Child workflows do NOT inherit parent's RetryPolicy - they get UNLIMITED retries by default | ✅ |
 | TA010 | circular-dependency | error | A↔B deadlocks never resolve and cascade into system-wide issues | |
 | TA011 | orphan-node | warning | Dead code adds maintenance burden and confuses developers | |
 | TA020 | high-fan-out | warning | High coupling increases blast radius and indicates missing abstractions | |
@@ -223,6 +313,7 @@ jobs:
 | TA031 | signal-without-handler | warning | Unhandled signals are silently dropped—a hidden failure mode | |
 | TA032 | query-without-return | info | Queries that return nothing defeat their inspection purpose | |
 | TA033 | continue-as-new-risk | info | Without termination conditions, workflows run forever | |
+| TA034 | consider-query-handler | info | Workflows with long activities could use QueryHandlers for progress tracking | 📝 |
 | TA040 | arguments-mismatch | error | Wrong argument count/types cause runtime deserialization failures | |
 
 ✅ = insertable code fix, 📝 = code template

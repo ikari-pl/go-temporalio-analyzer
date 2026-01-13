@@ -61,6 +61,10 @@ type Issue struct {
 	NodeType    string   `json:"nodeType,omitempty"`
 	// Fix contains a suggested code fix that can be applied automatically
 	Fix *CodeFix `json:"fix,omitempty"`
+
+	// LLM enhancement fields
+	Confidence   float64 `json:"confidence,omitempty"`   // LLM confidence in the finding (0.0-1.0)
+	LLMReasoning string  `json:"llmReasoning,omitempty"` // LLM explanation for verification/fix
 }
 
 // CodeFix represents a suggested code change to fix an issue.
@@ -102,23 +106,26 @@ type Rule interface {
 // Best Practice Rules
 // =============================================================================
 
-// ActivityWithoutRetryRule checks for activities without retry policies.
-type ActivityWithoutRetryRule struct{}
+// ActivityUnlimitedRetryRule checks for activities with unlimited retry attempts.
+// NOTE: Temporal SDK has UNLIMITED retries by default (MaximumAttempts=0).
+// This rule warns when activities might retry forever, which may not be desired
+// for payment/idempotency-sensitive operations.
+type ActivityUnlimitedRetryRule struct{}
 
-func (r *ActivityWithoutRetryRule) ID() string         { return "TA001" }
-func (r *ActivityWithoutRetryRule) Name() string       { return "activity-without-retry" }
-func (r *ActivityWithoutRetryRule) Category() Category { return CategoryReliability }
-func (r *ActivityWithoutRetryRule) Severity() Severity { return SeverityWarning }
-func (r *ActivityWithoutRetryRule) Description() string {
-	return "Network blips, service restarts, and temporary unavailability are common. Without retry policies, every transient error becomes a workflow failure requiring manual intervention."
+func (r *ActivityUnlimitedRetryRule) ID() string         { return "TA001" }
+func (r *ActivityUnlimitedRetryRule) Name() string       { return "activity-unlimited-retry" }
+func (r *ActivityUnlimitedRetryRule) Category() Category { return CategoryReliability }
+func (r *ActivityUnlimitedRetryRule) Severity() Severity { return SeverityWarning }
+func (r *ActivityUnlimitedRetryRule) Description() string {
+	return "Activities have UNLIMITED retries by default (MaximumAttempts=0). For non-idempotent operations (payments, filings), unlimited retries could cause duplicate processing. Consider setting explicit MaximumAttempts."
 }
 
-func (r *ActivityWithoutRetryRule) Check(ctx context.Context, graph *analyzer.TemporalGraph) []Issue {
+func (r *ActivityUnlimitedRetryRule) Check(ctx context.Context, graph *analyzer.TemporalGraph) []Issue {
 	var issues []Issue
 
-	// Check activity calls in workflows for missing retry policies.
-	// Retry policies are configured at the call site (via WithActivityOptions),
-	// not on the activity definition itself.
+	// Check activity calls in workflows for unlimited retry policies.
+	// Retry policies are configured at the call site (via WithActivityOptions).
+	// If no RetryPolicy is set, Temporal uses SERVER DEFAULTS: unlimited retries.
 	for _, node := range graph.Nodes {
 		// Only check workflow nodes for their activity call sites
 		if node.Type != "workflow" {
@@ -131,27 +138,29 @@ func (r *ActivityWithoutRetryRule) Check(ctx context.Context, graph *analyzer.Te
 				continue
 			}
 
-			// Check if retry policy is configured at this call site
-			hasRetryPolicy := false
-			if callSite.ParsedActivityOpts != nil {
-				hasRetryPolicy = callSite.ParsedActivityOpts.HasRetryPolicy()
+			// Check if retry policy explicitly sets MaximumAttempts
+			hasMaxAttempts := false
+			if callSite.ParsedActivityOpts != nil && callSite.ParsedActivityOpts.RetryPolicy != nil {
+				// MaximumAttempts > 0 means bounded retries
+				// MaximumAttempts == 1 means no retries (intentionally disabled)
+				hasMaxAttempts = callSite.ParsedActivityOpts.RetryPolicy.MaximumAttempts > 0
 			}
 
-			if !hasRetryPolicy {
+			if !hasMaxAttempts {
 				issues = append(issues, Issue{
 					RuleID:      r.ID(),
 					RuleName:    r.Name(),
 					Severity:    r.Severity(),
 					Category:    r.Category(),
-					Message:     fmt.Sprintf("Activity '%s' has no retry policy configured", callSite.TargetName),
+					Message:     fmt.Sprintf("Activity '%s' has unlimited retry attempts (server default)", callSite.TargetName),
 					Description: r.Description(),
-					Suggestion:  "Add a RetryPolicy to activity options for transient failure resilience",
+					Suggestion:  "Consider setting MaximumAttempts in RetryPolicy for bounded retries, especially for non-idempotent operations",
 					FilePath:    callSite.FilePath,
 					LineNumber:  callSite.LineNumber,
 					NodeName:    callSite.TargetName,
 					NodeType:    callSite.CallType,
 					Fix: &CodeFix{
-						Description: "Add retry policy to activity options",
+						Description: "Add bounded retry policy to activity options",
 						Replacements: []Replacement{{
 							FilePath:  callSite.FilePath,
 							StartLine: callSite.LineNumber,
@@ -161,7 +170,7 @@ func (r *ActivityWithoutRetryRule) Check(ctx context.Context, graph *analyzer.Te
 		InitialInterval:    time.Second,
 		BackoffCoefficient: 2.0,
 		MaximumInterval:    time.Minute,
-		MaximumAttempts:    3,
+		MaximumAttempts:    3, // Bounded retries prevent infinite loops
 	},
 }
 ctx = workflow.WithActivityOptions(ctx, ao)`,
@@ -250,7 +259,7 @@ func (r *LongRunningActivityWithoutHeartbeatRule) Name() string {
 func (r *LongRunningActivityWithoutHeartbeatRule) Category() Category { return CategoryReliability }
 func (r *LongRunningActivityWithoutHeartbeatRule) Severity() Severity { return SeverityWarning }
 func (r *LongRunningActivityWithoutHeartbeatRule) Description() string {
-	return "Long-running activities should have heartbeats. Without them, if a worker dies (OOMKill, scale-down, SIGKILL), Temporal must wait for the full timeout before retrying. Heartbeats enable fast failure detection."
+	return "Long-running activities should have heartbeats. Without them, if a worker dies (OOMKill, scale-down, SIGKILL), Temporal must wait for the full timeout before retrying. Use background goroutine heartbeats for best results."
 }
 
 func (r *LongRunningActivityWithoutHeartbeatRule) Check(ctx context.Context, graph *analyzer.TemporalGraph) []Issue {
@@ -275,7 +284,11 @@ func (r *LongRunningActivityWithoutHeartbeatRule) Check(ctx context.Context, gra
 				strings.Contains(targetName, "sync") ||
 				strings.Contains(targetName, "import") ||
 				strings.Contains(targetName, "export") ||
-				strings.Contains(targetName, "migrate")
+				strings.Contains(targetName, "migrate") ||
+				strings.Contains(targetName, "generate") ||
+				strings.Contains(targetName, "create") ||
+				strings.Contains(targetName, "cleanup") ||
+				strings.Contains(targetName, "duplicate")
 
 			if !isLongRunning {
 				continue
@@ -295,7 +308,7 @@ func (r *LongRunningActivityWithoutHeartbeatRule) Check(ctx context.Context, gra
 					Category:    r.Category(),
 					Message:     fmt.Sprintf("Potentially long-running activity '%s' has no heartbeat configured", callSite.TargetName),
 					Description: r.Description(),
-					Suggestion:  "Add HeartbeatTimeout and call activity.RecordHeartbeat(ctx, progress) periodically in the activity implementation",
+					Suggestion:  "Add HeartbeatTimeout and use background goroutine heartbeats (not just per-item heartbeats in loops, which can timeout during slow individual items)",
 					FilePath:    callSite.FilePath,
 					LineNumber:  callSite.LineNumber,
 					NodeName:    callSite.TargetName,
@@ -310,6 +323,81 @@ func (r *LongRunningActivityWithoutHeartbeatRule) Check(ctx context.Context, gra
 	HeartbeatTimeout:    30 * time.Second,
 }
 ctx = workflow.WithActivityOptions(ctx, ao)`,
+						}},
+					},
+				})
+			}
+		}
+	}
+	return issues
+}
+
+// ChildWorkflowUnlimitedRetryRule checks for child workflows with unlimited retry attempts.
+// NOTE: Child workflows do NOT inherit RetryPolicy from parent workflows.
+// They get Temporal server defaults (unlimited retries) if not explicitly set.
+type ChildWorkflowUnlimitedRetryRule struct{}
+
+func (r *ChildWorkflowUnlimitedRetryRule) ID() string         { return "TA004" }
+func (r *ChildWorkflowUnlimitedRetryRule) Name() string       { return "child-workflow-unlimited-retry" }
+func (r *ChildWorkflowUnlimitedRetryRule) Category() Category { return CategoryReliability }
+func (r *ChildWorkflowUnlimitedRetryRule) Severity() Severity { return SeverityWarning }
+func (r *ChildWorkflowUnlimitedRetryRule) Description() string {
+	return "Child workflows do NOT inherit RetryPolicy from parent workflows. They get Temporal server defaults (UNLIMITED retries). For payment/idempotency-sensitive child workflows, this could cause duplicate processing. Consider setting explicit MaximumAttempts."
+}
+
+func (r *ChildWorkflowUnlimitedRetryRule) Check(ctx context.Context, graph *analyzer.TemporalGraph) []Issue {
+	var issues []Issue
+
+	// Check child workflow calls for unlimited retry policies.
+	for _, node := range graph.Nodes {
+		if node.Type != "workflow" {
+			continue
+		}
+
+		for _, callSite := range node.CallSites {
+			// Only check child_workflow calls
+			if callSite.CallType != "child_workflow" {
+				continue
+			}
+
+			// Child workflows use WorkflowOptions, not ActivityOptions
+			// For now, we flag all child workflows without explicit retry configuration
+			// since ParsedActivityOpts won't capture ChildWorkflowOptions
+			//
+			// TODO: Add ChildWorkflowOptions parsing to extractor.go
+			hasMaxAttempts := false
+			if callSite.ParsedActivityOpts != nil && callSite.ParsedActivityOpts.RetryPolicy != nil {
+				hasMaxAttempts = callSite.ParsedActivityOpts.RetryPolicy.MaximumAttempts > 0
+			}
+
+			if !hasMaxAttempts {
+				issues = append(issues, Issue{
+					RuleID:      r.ID(),
+					RuleName:    r.Name(),
+					Severity:    r.Severity(),
+					Category:    r.Category(),
+					Message:     fmt.Sprintf("Child workflow '%s' has unlimited retry attempts (does NOT inherit from parent)", callSite.TargetName),
+					Description: r.Description(),
+					Suggestion:  "Consider setting MaximumAttempts in ChildWorkflowOptions.RetryPolicy for bounded retries",
+					FilePath:    callSite.FilePath,
+					LineNumber:  callSite.LineNumber,
+					NodeName:    callSite.TargetName,
+					NodeType:    callSite.CallType,
+					Fix: &CodeFix{
+						Description: "Add bounded retry policy to child workflow options",
+						Replacements: []Replacement{{
+							FilePath:  callSite.FilePath,
+							StartLine: callSite.LineNumber,
+							NewText: `childOpts := workflow.ChildWorkflowOptions{
+	WorkflowExecutionTimeout: 1 * time.Hour,
+	RetryPolicy: &temporal.RetryPolicy{
+		InitialInterval:    time.Second,
+		BackoffCoefficient: 2.0,
+		MaximumInterval:    time.Minute,
+		MaximumAttempts:    3, // Child workflows do NOT inherit parent's retry policy
+	},
+}
+ctx = workflow.WithChildOptions(ctx, childOpts)`,
 						}},
 					},
 				})
@@ -675,6 +763,79 @@ func (r *ContinueAsNewWithoutConditionRule) Check(ctx context.Context, graph *an
 			})
 		}
 	}
+	return issues
+}
+
+// ConsiderQueryHandlerRule suggests using QueryHandlers for workflows with rich heartbeat data.
+// QueryHandlers provide on-demand progress queries at the workflow level, which can be
+// more efficient than storing detailed progress in activity heartbeats.
+type ConsiderQueryHandlerRule struct{}
+
+func (r *ConsiderQueryHandlerRule) ID() string         { return "TA034" }
+func (r *ConsiderQueryHandlerRule) Name() string       { return "consider-query-handler" }
+func (r *ConsiderQueryHandlerRule) Category() Category { return CategoryBestPractice }
+func (r *ConsiderQueryHandlerRule) Severity() Severity { return SeverityInfo }
+func (r *ConsiderQueryHandlerRule) Description() string {
+	return "Workflows with long-running activities often need progress tracking. QueryHandlers provide on-demand progress queries without the serialization overhead of rich heartbeat payloads. Consider using SetQueryHandler for progress state."
+}
+
+func (r *ConsiderQueryHandlerRule) Check(ctx context.Context, graph *analyzer.TemporalGraph) []Issue {
+	var issues []Issue
+
+	for _, node := range graph.Nodes {
+		if node.Type != "workflow" {
+			continue
+		}
+
+		// Check if workflow has activities with heartbeat timeouts but no query handlers
+		hasLongActivities := false
+		for _, callSite := range node.CallSites {
+			if callSite.CallType == "activity" || callSite.CallType == "local_activity" {
+				if callSite.ParsedActivityOpts != nil && callSite.ParsedActivityOpts.HeartbeatTimeout != "" {
+					hasLongActivities = true
+					break
+				}
+			}
+		}
+
+		// Check if workflow already has query handlers
+		hasQueryHandler := len(node.Queries) > 0
+
+		// Suggest QueryHandler if workflow has long activities but no query handlers
+		if hasLongActivities && !hasQueryHandler {
+			issues = append(issues, Issue{
+				RuleID:      r.ID(),
+				RuleName:    r.Name(),
+				Severity:    r.Severity(),
+				Category:    r.Category(),
+				Message:     fmt.Sprintf("Workflow '%s' has long-running activities but no QueryHandler for progress tracking", node.Name),
+				Description: r.Description(),
+				Suggestion:  "Consider adding a QueryHandler for progress state instead of or in addition to rich heartbeat payloads",
+				FilePath:    node.FilePath,
+				LineNumber:  node.LineNumber,
+				NodeName:    node.Name,
+				NodeType:    node.Type,
+				Fix: &CodeFix{
+					Description: "Add QueryHandler for progress tracking",
+					Replacements: []Replacement{{
+						FilePath:  node.FilePath,
+						StartLine: node.LineNumber,
+						NewText: `err := workflow.SetQueryHandler(ctx, "progress", func() (map[string]interface{}, error) {
+	return map[string]interface{}{
+		"phase":     currentPhase,
+		"processed": itemsProcessed,
+		"total":     totalItems,
+	}, nil
+})
+if err != nil {
+	return err
+}`,
+					}},
+				},
+			})
+		}
+	}
+
 	return issues
 }
 

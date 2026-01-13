@@ -29,14 +29,14 @@ func TestSeverityLevel(t *testing.T) {
 	}
 }
 
-func TestActivityWithoutRetryRule(t *testing.T) {
-	rule := &ActivityWithoutRetryRule{}
+func TestActivityUnlimitedRetryRule(t *testing.T) {
+	rule := &ActivityUnlimitedRetryRule{}
 
 	if rule.ID() != "TA001" {
 		t.Errorf("ID() = %q, want %q", rule.ID(), "TA001")
 	}
-	if rule.Name() != "activity-without-retry" {
-		t.Errorf("Name() = %q, want %q", rule.Name(), "activity-without-retry")
+	if rule.Name() != "activity-unlimited-retry" {
+		t.Errorf("Name() = %q, want %q", rule.Name(), "activity-unlimited-retry")
 	}
 	if rule.Category() != CategoryReliability {
 		t.Errorf("Category() = %v, want %v", rule.Category(), CategoryReliability)
@@ -47,7 +47,7 @@ func TestActivityWithoutRetryRule(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Test with activity call without retry policy
+	// Test with activity call without MaximumAttempts set (unlimited retries - should warn)
 	graph := &analyzer.TemporalGraph{
 		Nodes: map[string]*analyzer.TemporalNode{
 			"TestWorkflow": {
@@ -57,7 +57,7 @@ func TestActivityWithoutRetryRule(t *testing.T) {
 					{
 						TargetName:         "TestActivity",
 						CallType:           "activity",
-						ParsedActivityOpts: nil, // No options = no retry policy
+						ParsedActivityOpts: nil, // No options = server defaults (unlimited retries)
 					},
 				},
 			},
@@ -70,16 +70,25 @@ func TestActivityWithoutRetryRule(t *testing.T) {
 
 	issues := rule.Check(ctx, graph)
 	if len(issues) == 0 {
-		t.Error("Expected issue for activity without retry policy")
+		t.Error("Expected issue for activity with unlimited retries (server default)")
 	}
 
-	// Test with activity call with retry policy
+	// Test with activity call with explicit MaximumAttempts (bounded retries - no warning)
 	graph.Nodes["TestWorkflow"].CallSites[0].ParsedActivityOpts = &analyzer.ActivityOptions{
 		RetryPolicy: &analyzer.RetryPolicy{MaximumAttempts: 3},
 	}
 	issues = rule.Check(ctx, graph)
 	if len(issues) != 0 {
-		t.Error("Should not report issue for activity with retry policy")
+		t.Error("Should not report issue for activity with bounded retries (MaximumAttempts=3)")
+	}
+
+	// Test with MaximumAttempts=1 (disabled retries - no warning, it's intentional)
+	graph.Nodes["TestWorkflow"].CallSites[0].ParsedActivityOpts = &analyzer.ActivityOptions{
+		RetryPolicy: &analyzer.RetryPolicy{MaximumAttempts: 1},
+	}
+	issues = rule.Check(ctx, graph)
+	if len(issues) != 0 {
+		t.Error("Should not report issue for activity with MaximumAttempts=1 (intentionally disabled)")
 	}
 }
 
